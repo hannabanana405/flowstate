@@ -4,6 +4,7 @@ import 'tldraw/tldraw.css';
 import { Trash2, Plus, Link, Calendar, Clock, Search, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 
 export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: any) => {
+  const licenseKey = import.meta.env.VITE_TLDRAW_KEY;
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   
@@ -135,8 +136,8 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
         
         {/* Search Bar */}
         <div className="mb-4 relative">
-             <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
-             <input 
+              <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
+              <input 
                 type="text" 
                 placeholder="Search..." 
                 value={search}
@@ -188,10 +189,11 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
          <div className="absolute inset-0 tldraw-wrapper">
             {activeBoard ? (
                 <Tldraw 
-                    key={activeBoard.id} 
-                    onMount={handleMount} 
-                    // assetUrls={assetUrls}  <-- REMOVED THIS LINE
-                    inferDarkMode 
+                    key={activeBoard.id}
+                    onMount={handleMount}
+                    licenseKey={licenseKey} // <--- THIS IS THE FIX 🔑
+                    inferDarkMode
+                    persistenceKey={`flowstate-board-${activeBoard.id}`}
                 />
             ) : (
                 <div className="flex items-center justify-center h-full text-slate-500">
@@ -247,7 +249,7 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                                      {pickerFilteredProjects.length > 0 ? pickerFilteredProjects.map((p:any) => (
                                          <button 
                                              key={p.id} 
-                                             onClick={() => updateBoardProject(p.id)}
+                                             onClick={() => updateBoardProject(p.id)} 
                                              className={`w-full text-left px-3 py-2 text-xs rounded-lg transition-colors flex justify-between items-center ${activeBoard.projectId === p.id ? 'bg-blue-600/20 text-blue-400' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
                                          >
                                              <span className="truncate">{p.name}</span>
