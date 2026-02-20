@@ -5,8 +5,13 @@ import { Trash2, Plus, Link, Calendar, Clock, Search, ChevronLeft, ChevronRight,
 
 export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: any) => {
   const licenseKey = import.meta.env.VITE_TLDRAW_KEY;
+  
+  // 👇 ADD THIS LINE: Only use the key if we are NOT on localhost
+  const safeLicenseKey = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? undefined : licenseKey;
+
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [projectFilter, setProjectFilter] = useState('All'); // <-- NEW FILTER STATE
   
   // --- PAGINATION STATE ---
   const [currentPage, setCurrentPage] = useState(1);
@@ -36,10 +41,10 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
     }
   }, [data.whiteboards, selectedBoardId, focusBoardId]);
 
-  // Reset pagination on search
+  // Reset pagination on search or filter change
   useEffect(() => {
     setCurrentPage(1);
-  }, [search]);
+  }, [search, projectFilter]);
 
   // Close picker when clicking outside
   useEffect(() => {
@@ -52,10 +57,16 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
       return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // FILTER & PAGINATION LOGIC
-  const filteredBoards = data.whiteboards.filter((wb: any) => 
-    wb.name.toLowerCase().includes(search.toLowerCase())
-  );
+// FILTER & PAGINATION LOGIC
+  const filteredBoards = data.whiteboards.filter((wb: any) => {
+    // 1. Filter by Project First
+    if (projectFilter !== 'All' && wb.projectId !== projectFilter) return false;
+
+    // 2. Then Filter by Search
+    const boardName = wb.name || ''; 
+    const searchTerm = search || '';
+    return boardName.toLowerCase().includes(searchTerm.toLowerCase());
+  });
 
   const totalPages = Math.ceil(filteredBoards.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -101,9 +112,25 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
 
     const cleanupListener = editorInstance.store.listen(handleChange);
 
+// THE FIX: Force save when the component closes!
     return () => {
       cleanupListener();
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current); 
+        
+        // 👇 ADDED SAFETY CHECK: Only save if the editor didn't crash
+        if (editorInstance && editorInstance.store) {
+            const { document, session } = getSnapshot(editorInstance.store);
+            dispatch({ 
+              type: 'UPDATE_WHITEBOARD', 
+              payload: { 
+                  id: activeBoard.id, 
+                  snapshot: { document, session },
+                  lastUpdated: new Date().toLocaleDateString()
+              } 
+            });
+        }
+      }
     };
   }, [activeBoard, dispatch]);
 
@@ -134,16 +161,30 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
       <div className="w-48 glass rounded-2xl p-4 flex flex-col z-10">
         <h3 className="font-bold mb-4 text-slate-300">Boards</h3>
         
-        {/* Search Bar */}
-        <div className="mb-4 relative">
-              <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
-              <input 
-                type="text" 
-                placeholder="Search..." 
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 placeholder-slate-600 transition-colors"
-             />
+        {/* Controls */}
+        <div className="mb-4 space-y-2">
+            <div className="relative">
+                  <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
+                  <input 
+                    type="text" 
+                    placeholder="Search boards..." 
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 placeholder-slate-600 transition-colors"
+                 />
+            </div>
+
+            {/* --- NEW PROJECT FILTER DROPDOWN --- */}
+            <select 
+                value={projectFilter} 
+                onChange={e => setProjectFilter(e.target.value)} 
+                className="w-full bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg focus:outline-none focus:border-blue-500 text-xs"
+            >
+                <option value="All">All Projects</option>
+                {data.projects?.filter((p:any) => p.status !== 'Done').map((p:any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+            </select>
         </div>
 
         {/* List */}
@@ -187,11 +228,11 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
       {/* Tldraw Canvas */}
       <div className="flex-1 glass-heavy rounded-2xl overflow-hidden relative">
          <div className="absolute inset-0 tldraw-wrapper">
-            {activeBoard ? (
+{activeBoard ? (
                 <Tldraw 
                     key={activeBoard.id}
                     onMount={handleMount}
-                    licenseKey={licenseKey} // <--- THIS IS THE FIX 🔑
+                    licenseKey={safeLicenseKey} // <--- ADD THIS LINE BACK IN
                     inferDarkMode
                     persistenceKey={`flowstate-board-${activeBoard.id}`}
                 />

@@ -10,6 +10,7 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
   const [status, setStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false); 
+  const [projectFilter, setProjectFilter] = useState('All'); // <-- NEW FILTER STATE
   
   // --- PROJECT PICKER STATE ---
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
@@ -50,10 +51,10 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
     }
   }, [selectedDocId, data.docs]); 
 
-  // Reset pagination when search changes
+  // Reset pagination when search or filter changes
   useEffect(() => {
       setCurrentPage(1);
-  }, [search]);
+  }, [search, projectFilter]);
 
   // Close project picker when clicking outside
   useEffect(() => {
@@ -114,6 +115,10 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
   };
 
   const allFilteredDocs = data.docs.filter((doc: any) => {
+      // 1. Filter by Project First
+      if (projectFilter !== 'All' && doc.projectId !== projectFilter) return false;
+      
+      // 2. Then Filter by Search
       const query = search.toLowerCase();
       const matchTitle = doc.title && doc.title.toLowerCase().includes(query);
       const matchContent = doc.content && doc.content.toLowerCase().includes(query);
@@ -163,15 +168,29 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
             </button>
         </div>
 
-        <div className="mb-4 relative">
-             <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
-             <input 
-                type="text" 
-                placeholder="Search..." 
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 placeholder-slate-600 transition-colors"
-             />
+        <div className="mb-4 space-y-2">
+            <div className="relative">
+                 <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
+                 <input 
+                    type="text" 
+                    placeholder="Search docs..." 
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 placeholder-slate-600 transition-colors"
+                 />
+            </div>
+            
+            {/* --- NEW PROJECT FILTER DROPDOWN --- */}
+            <select 
+                value={projectFilter} 
+                onChange={e => setProjectFilter(e.target.value)} 
+                className="w-full bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg focus:outline-none focus:border-blue-500 text-xs"
+            >
+                <option value="All">All Projects</option>
+                {projects?.filter((p:any) => p.status !== 'Done').map((p:any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+            </select>
         </div>
 
         <div className="flex-1 overflow-y-auto space-y-2 flex flex-col">

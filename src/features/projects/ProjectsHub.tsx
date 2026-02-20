@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { 
   Search, Plus, ChevronRight, Calendar, Archive, RefreshCcw, 
-  FileText, PenTool, Trash2, ChevronLeft, CheckSquare 
+  FileText, PenTool, Trash2, ChevronLeft, CheckSquare, X 
 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
+
 
 // --- UTILS (FIXED FOR LOCAL TIMEZONE) ---
 const toLocalISOString = (date: Date) => {
@@ -215,9 +216,24 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-white">Projects</h2>
         <div className="flex gap-4 items-center">
-            <div className="relative">
-                <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
-                <input type="text" placeholder="Find a project..." value={search} onChange={e => setSearch(e.target.value)} className="w-64 bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-all" />
+{/* Search Bar with Clear Button */}
+            <div className="relative flex items-center">
+                <Search className="absolute left-3 text-slate-500" size={16} />
+                <input 
+                    type="text" 
+                    placeholder="Find a project..." 
+                    value={search} 
+                    onChange={e => setSearch(e.target.value)} 
+                    className="w-64 bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-10 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-all" 
+                />
+                {search && (
+                    <button 
+                        onClick={() => setSearch('')} 
+                        className="absolute right-3 text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                        <X size={16} />
+                    </button>
+                )}
             </div>
             <button onClick={() => { setEditingProject({ name: '', status: 'On Track', statusNote: '', blockers: [], history: [], dependencies: [] }); setIsModalOpen(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex gap-2 items-center">
                 <Plus size={16} /> New Project
@@ -233,7 +249,11 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
             <div key={p.id} onClick={() => openProject(p)} className="glass p-6 rounded-2xl group border-t border-white/5 hover:border-blue-500/30 cursor-pointer transition-all">
                 <div className="flex justify-between items-start mb-4">
                     <h3 className="text-lg font-bold text-white group-hover:text-blue-400 transition-colors">{p.name}</h3>
-                    <span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'At Risk' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>{p.status}</span>
+                    <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        p.status === 'At Risk' ? 'bg-red-500/20 text-red-400' : 
+                        p.status === 'Off Track' ? 'bg-purple-500/20 text-purple-400' : 
+                        'bg-emerald-500/20 text-emerald-400'
+                    }`}>{p.status}</span>
                 </div>
                 <div className="mb-4">
                     <div className="w-full bg-slate-800 rounded-full h-1.5">

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   Search, Plus, RefreshCcw, Archive, Trash2, Repeat, ChevronLeft, ChevronRight,
-  ChevronDown 
+  ChevronDown, X
 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
 import confetti from 'canvas-confetti';
@@ -17,7 +17,8 @@ const toLocalISOString = (date: Date) => {
 const getToday = () => toLocalISOString(new Date());
 
 const addDays = (d: string, n: number) => {
-    const date = new Date(d);
+    // Adding T12:00:00 forces midday so the timezone shift can't roll it back a day!
+    const date = new Date(d + 'T12:00:00'); 
     date.setDate(date.getDate() + n);
     return toLocalISOString(date);
 };
@@ -47,7 +48,6 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
   const [filter, setFilter] = useState('All');
   const [projectFilter, setProjectFilter] = useState('All');
   const [dateFilter, setDateFilter] = useState('Today'); // "Today" is default
-  const [priorityFilter, setPriorityFilter] = useState('All');
   const [search, setSearch] = useState('');
   
   // --- PAGINATION STATE ---
@@ -76,11 +76,10 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
     }
   }, [focusTaskId, data.tasks, clearFocus]);
 
-  // Reset page when filters change
+// Reset page when filters change
   useEffect(() => {
       setCurrentPage(1);
-  }, [filter, projectFilter, dateFilter, priorityFilter, search]);
-
+  }, [filter, projectFilter, dateFilter, search]);
   // Close picker when clicking outside
   useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
@@ -146,20 +145,15 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
         editingTask.history = [historyEntry, ...(editingTask.history || [])];
     }
 
-    // --- RECURRENCE ENGINE ---
+    // --- RECURRENCE ENGINE (THE RECYCLER) ---
     if (original && original.status !== 'Done' && editingTask.status === 'Done' && editingTask.recurrence && editingTask.recurrence !== 'None') {
         const nextDate = calculateNextDate(editingTask.dueDate, editingTask.recurrence);
         
-        const nextTask = {
-            ...editingTask,
-            id: crypto.randomUUID(),
-            status: 'Not Started',
-            dueDate: nextDate,
-            history: [],
-            statusNote: '',
-        };
-
-        dispatch({ type: 'ADD_TASK', payload: nextTask });
+        // Instead of making a new task, we instantly mutate this one and bounce it forward!
+        // No database bloat, and the "old" one effectively ceases to exist.
+        editingTask.status = 'Not Started';
+        editingTask.dueDate = nextDate;
+        editingTask.statusNote = `Recycled! Next due: ${nextDate}`;
     }
 
     // Save
@@ -207,21 +201,27 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
         }
     }
 
-    let matchesPriority = true;
-    if (priorityFilter !== 'All') { matchesPriority = t.priority === priorityFilter; }
+return matchesStatus && matchesProject && matchesSearch && matchesDate;
+  });
 
-    return matchesStatus && matchesProject && matchesSearch && matchesDate && matchesPriority;
+// --- ICE SORTING LOGIC ---
+  const sortedAndFiltered = [...filtered].sort((a, b) => {
+      // Default to 1 if not scored yet
+      const scoreA = (a.ice?.impact || 1) * (a.ice?.confidence || 1) * (a.ice?.ease || 1);
+      const scoreB = (b.ice?.impact || 1) * (b.ice?.confidence || 1) * (b.ice?.ease || 1);
+      return scoreB - scoreA; // Highest score sits at the top!
   });
 
   // --- PAGINATION CALCULATION ---
-  const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(sortedAndFiltered.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedTasks = filtered.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  const paginatedTasks = sortedAndFiltered.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-  const openNewTask = () => {
+const openNewTask = () => {
       setEditingTask({ 
           title: '', status: 'Not Started', priority: 'Medium', 
-          dueDate: getToday(), project: '', tags: [], notes: '', statusNote: '', history: [] 
+          dueDate: getToday(), project: '', tags: [], notes: '', statusNote: '', history: [],
+          ice: { impact: 1, confidence: 1, ease: 1 } // <--- ADDED DEFAULT ICE
       });
       setModalTab('details');
       setIsModalOpen(true);
@@ -238,16 +238,25 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
     <div className="h-full flex flex-col space-y-6">
       {/* Controls Header */}
       <div className="flex justify-between items-center gap-4">
-        <div className="relative flex-1 max-w-lg">
-          <Search className="absolute left-4 top-3.5 text-slate-500" size={20} />
-          <input 
-            type="text" 
-            placeholder="Search tasks..." 
-            value={search} 
-            onChange={e => setSearch(e.target.value)} 
-            className="w-full bg-slate-900 border border-slate-800 text-slate-200 pl-12 pr-4 py-3 rounded-xl focus:outline-none focus:border-blue-500 transition-colors" 
-          />
-        </div>
+{/* Search Bar with Clear Button */}
+            <div className="relative flex items-center">
+                <Search className="absolute left-3 text-slate-500" size={16} />
+                <input 
+                    type="text" 
+                    placeholder="Search tasks..." 
+                    value={search} // (Make sure this matches your search state variable name)
+                    onChange={e => setSearch(e.target.value)} 
+                    className="w-64 bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-10 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-all" 
+                />
+                {search && (
+                    <button 
+                        onClick={() => setSearch('')} 
+                        className="absolute right-3 text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                        <X size={16} />
+                    </button>
+                )}
+            </div>
         
         <div className="flex items-center gap-2">
             <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="bg-slate-900 border border-slate-800 text-slate-300 py-3 px-4 rounded-xl focus:outline-none focus:border-blue-500 text-sm">
@@ -266,13 +275,6 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
                 <option value="Overdue" className="text-red-400 font-bold">! Overdue Only</option>
             </select>
 
-            <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)} className="bg-slate-900 border border-slate-800 text-slate-300 py-3 px-4 rounded-xl focus:outline-none focus:border-blue-500 text-sm">
-                <option value="All">Any Priority</option>
-                <option value="Low">Low</option>
-                <option value="Medium">Medium</option>
-                <option value="High">High</option>
-                <option value="Critical">Critical</option>
-            </select>
 
             <button onClick={openNewTask} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all shadow-lg shadow-blue-900/20 ml-2">
                 <Plus size={20} /> Add Task
@@ -306,7 +308,7 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
                         <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-wider">Project</th>
                         <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
                         <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-wider">Due</th>
-                        <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-wider">Priority</th>
+                        <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-wider">ICE</th>
                         <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>
                     </tr>
                 </thead>
@@ -348,23 +350,37 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
                                 {t.dueDate < getToday() && t.status !== 'Done' && <span className="text-xs ml-1">(Late)</span>}
                             </td>
                             <td className="p-5">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
-                                    t.priority === 'Critical' ? 'text-red-500 bg-red-500/10' : 
-                                    t.priority === 'High' ? 'text-orange-400 bg-orange-500/10' : 
-                                    'text-slate-500 bg-slate-800'
-                                }`}>
-                                    {t.priority}
+                                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black text-xs shadow-[0_0_10px_rgba(59,130,246,0.2)]">
+                                    {(t.ice?.impact || 1) * (t.ice?.confidence || 1) * (t.ice?.ease || 1)}
                                 </span>
                             </td>
-                            <td className="p-5 text-right">
+<td className="p-5 text-right">
                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={() => { 
+                                    {/* --- NEW BUMP BUTTON --- */}
+                                    <button 
+                                        onClick={(e) => { 
+                                            e.stopPropagation(); // Stops the modal from opening
+                                            dispatch({ 
+                                                type: 'UPDATE_TASK', 
+                                                payload: { ...t, dueDate: addDays(getToday(), 1) } 
+                                            }); 
+                                        }} 
+                                        className="p-2 text-slate-500 hover:text-amber-400"
+                                        title="Bump to Tomorrow"
+                                    >
+                                        <ChevronRight size={16} />
+                                    </button>
+                                    
+                                    <button onClick={(e) => { 
+                                        e.stopPropagation();
                                         if(!t.archived) triggerConfetti();
                                         dispatch({ type: t.archived ? 'RESTORE_TASK' : 'ARCHIVE_TASK', payload: t.id }); 
                                     }} className="p-2 text-slate-500 hover:text-blue-400">
                                         {t.archived ? <RefreshCcw size={16} /> : <Archive size={16} />}
                                     </button>
-                                    <button onClick={() => { 
+                                    
+                                    <button onClick={(e) => { 
+                                        e.stopPropagation();
                                         triggerConfetti(); 
                                         dispatch({ type: 'DELETE_TASK', payload: t.id }); 
                                     }} className="p-2 text-slate-500 hover:text-red-400">
@@ -439,26 +455,14 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
                                 onChange={e => setEditingTask({ ...editingTask, title: e.target.value })} 
                             />
                         </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Status</label>
-                                <select className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-300 focus:border-blue-500 focus:outline-none" value={editingTask.status} onChange={e => setEditingTask({ ...editingTask, status: e.target.value })}>
-                                    <option>Not Started</option>
-                                    <option>In Progress</option>
-                                    <option>Blocked</option>
-                                    <option>Done</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Priority</label>
-                                <select className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-300 focus:border-blue-500 focus:outline-none" value={editingTask.priority} onChange={e => setEditingTask({ ...editingTask, priority: e.target.value })}>
-                                    <option>Low</option>
-                                    <option>Medium</option>
-                                    <option>High</option>
-                                    <option>Critical</option>
-                                </select>
-                            </div>
+<div className="mb-4">
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Status</label>
+                            <select className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-300 focus:border-blue-500 focus:outline-none" value={editingTask.status} onChange={e => setEditingTask({ ...editingTask, status: e.target.value })}>
+                                <option>Not Started</option>
+                                <option>In Progress</option>
+                                <option>Blocked</option>
+                                <option>Done</option>
+                            </select>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
@@ -524,6 +528,43 @@ export const TaskManager = ({ data, dispatch, focusTaskId, clearFocus }: any) =>
                                     value={editingTask.dueDate} 
                                     onChange={e => setEditingTask({ ...editingTask, dueDate: e.target.value })} 
                                 />
+                            </div>
+                        </div> 
+                        {/* --- ICE SCORING --- */}
+                        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 space-y-4">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">I.C.E. Score</h4>
+                            
+                            {[
+                                { key: 'impact', label: 'Impact (1-5)' },
+                                { key: 'confidence', label: 'Confidence (1-5)' },
+                                { key: 'ease', label: 'Ease (1-5)' }
+                            ].map(metric => (
+                                <div key={metric.key} className="flex justify-between items-center">
+                                    <span className="text-sm font-bold text-slate-300">{metric.label}</span>
+                                    <div className="flex gap-2">
+                                        {[1, 2, 3, 4, 5].map(val => (
+                                            <button
+                                                key={val}
+                                                onClick={() => setEditingTask({
+                                                    ...editingTask,
+                                                    ice: { ...(editingTask.ice || { impact:1, confidence:1, ease:1 }), [metric.key]: val }
+                                                })}
+                                                className={`w-6 h-6 rounded-full transition-all duration-200 ${
+                                                    (editingTask.ice?.[metric.key] || 1) >= val 
+                                                        ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.6)] scale-110' 
+                                                        : 'bg-slate-800 hover:bg-slate-700'
+                                                }`}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                            
+                            <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
+                                <span className="text-xs text-slate-500 font-bold uppercase">Total Priority Score</span>
+                                <span className="text-2xl font-black text-blue-400">
+                                    {(editingTask.ice?.impact || 1) * (editingTask.ice?.confidence || 1) * (editingTask.ice?.ease || 1)}
+                                </span>
                             </div>
                         </div>
 

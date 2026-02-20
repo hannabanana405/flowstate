@@ -370,7 +370,40 @@ function App() {
     return () => unsubs.forEach(u => u());
   }, [state.user]);
 
-  // 3. Dispatch Wrapper
+  // --- 3. THE BOOT SEQUENCE (Client-Side Reset Engine) ---
+  useEffect(() => {
+      // Don't run until tasks are actually loaded from Firebase
+      if (!state.user || state.tasks.length === 0) return;
+
+      const today = getToday();
+      const lastOpened = localStorage.getItem('flowstate_last_opened');
+
+      if (lastOpened !== today) {
+          console.log("🌅 New day detected! Running morning reset...");
+          let tasksReset = 0;
+
+          state.tasks.forEach((task: any) => {
+              // If it's a recurring daily task that wasn't completed, bump it to today so it stays fresh!
+              if (task.recurrence === 'Daily' && task.status !== 'Done' && task.dueDate < today) {
+                  dispatch({ 
+                      type: 'UPDATE_TASK', 
+                      payload: { 
+                          ...task, 
+                          dueDate: today, 
+                          statusNote: 'Auto-bumped by Morning Reset' 
+                      } 
+                  });
+                  tasksReset++;
+              }
+          });
+
+          // Mark today as "opened" so this engine goes to sleep until tomorrow
+          localStorage.setItem('flowstate_last_opened', today);
+          if (tasksReset > 0) console.log(`Reset ${tasksReset} daily tasks!`);
+      }
+  }, [state.user, state.tasks]); // Runs when tasks load
+
+  // 4. Dispatch Wrapper
   const dispatch = (action: any) => {
     const uid = state.user?.uid;
     if (!uid) return;
