@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   Search, Plus, ChevronRight, Calendar, Archive, RefreshCcw, 
-  FileText, PenTool, Trash2, ChevronLeft, CheckSquare, X 
+  FileText, PenTool, Trash2, ChevronLeft, CheckSquare, X, Edit2, CalendarPlus 
 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
 
@@ -36,9 +36,8 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
   const ARCHIVE_ITEMS_PER_PAGE = 9; // 3x3 Grid
   
   // Dependency & Quick Task State
-  const [newDep, setNewDep] = useState({ what: '', who: '' });
-  const [quickTaskTitle, setQuickTaskTitle] = useState(''); 
-
+  const [newDep, setNewDep] = useState({ id: '', what: '', who: '', targetDate: '' });
+  const [quickTaskTitle, setQuickTaskTitle] = useState('');
   const activeProjects = data.projects.filter((p:any) => p.status !== 'Done');
   const archivedProjects = data.projects.filter((p:any) => p.status === 'Done');
   
@@ -134,14 +133,22 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
       }
   };
 
-  const addDependency = () => {
+  const saveDependency = () => {
      if(!newDep.what) return;
-     const newDeps = [...(editingProject.dependencies || []), { id: crypto.randomUUID(), what: newDep.what, who: newDep.who }];
-     const updatedProject = { ...editingProject, dependencies: newDeps };
      
+     let newDeps;
+     if (newDep.id) {
+         // EDIT EXISTING
+         newDeps = editingProject.dependencies.map((d: any) => d.id === newDep.id ? { ...d, what: newDep.what, who: newDep.who, targetDate: newDep.targetDate } : d);
+     } else {
+         // CREATE NEW
+         newDeps = [...(editingProject.dependencies || []), { id: crypto.randomUUID(), what: newDep.what, who: newDep.who, targetDate: newDep.targetDate, dateAdded: getToday() }];
+     }
+     
+     const updatedProject = { ...editingProject, dependencies: newDeps };
      setEditingProject(updatedProject);
      dispatch({ type: 'UPDATE_PROJECT', payload: updatedProject });
-     setNewDep({ what: '', who: '' });
+     setNewDep({ id: '', what: '', who: '', targetDate: '' }); // Reset form
   };
 
   // --- QUICK ADD TASK LOGIC ---
@@ -366,27 +373,63 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
 
                 {activeTab === 'dependencies' && (
                     <div className="space-y-4">
-                        <div className="flex gap-2">
-                            <input value={newDep.what} onChange={e => setNewDep({...newDep, what: e.target.value})} placeholder="Blocker description..." className="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
-                            <input value={newDep.who} onChange={e => setNewDep({...newDep, who: e.target.value})} placeholder="Who?" className="w-1/3 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
-                            <button onClick={addDependency} className="bg-slate-800 hover:bg-slate-700 px-4 rounded-lg text-slate-300">
-                                <Plus size={20} />
-                            </button>
+                        <div className="flex flex-col gap-2 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
+                            <div className="flex gap-2">
+                                <input value={newDep.what} onChange={e => setNewDep({...newDep, what: e.target.value})} placeholder="What is blocking you?" className="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+                                <input value={newDep.who} onChange={e => setNewDep({...newDep, who: e.target.value})} placeholder="Who owns it?" className="w-1/3 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+                            </div>
+                            <div className="flex gap-2 items-center">
+                                <input type="date" value={newDep.targetDate} onChange={e => setNewDep({...newDep, targetDate: e.target.value})} className="flex-1 bg-white border border-slate-300 rounded-lg p-2 text-sm text-slate-900 focus:outline-none focus:border-blue-500" title="Target Resolution Date" />
+                                <button onClick={saveDependency} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-white font-bold text-sm transition-colors flex items-center justify-center min-w-[100px]">
+                                    {newDep.id ? 'Save Edit' : 'Add Blocker'}
+                                </button>
+                                {newDep.id && (
+                                    <button onClick={() => setNewDep({ id: '', what: '', who: '', targetDate: '' })} className="text-slate-500 hover:text-white text-sm px-2">Cancel</button>
+                                )}
+                            </div>
                         </div>
-                        <div className="space-y-2">
+
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                             {editingProject.dependencies?.map((d:any) => (
-                                <div key={d.id} className="flex justify-between items-center p-3 bg-slate-800/50 rounded-lg border-l-4 border-amber-500">
-                                    <div>
-                                        <div className="text-sm text-slate-200">{d.what}</div>
-                                        <div className="text-xs text-slate-500">Owner: {d.who}</div>
+                                <div key={d.id} className="flex flex-col p-3 bg-slate-800/50 rounded-xl border-l-4 border-amber-500 group relative">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-200 mb-1">{d.what}</div>
+                                            <div className="flex items-center gap-3 text-xs text-slate-400">
+                                                <span className="bg-slate-900 px-2 py-0.5 rounded text-slate-300">Owner: {d.who || 'Unassigned'}</span>
+                                                <span className="italic" title="Date Added">Added: {d.dateAdded || 'Unknown'}</span>
+                                                {d.targetDate && <span className="text-blue-400 font-medium">Target: {d.targetDate}</span>}
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Actions (Hover) */}
+                                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={() => setNewDep(d)} className="text-slate-500 hover:text-blue-400 transition-colors p-1" title="Edit Dependency">
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button onClick={() => {
+                                                const newDeps = editingProject.dependencies.filter((x:any) => x.id !== d.id);
+                                                setEditingProject({ ...editingProject, dependencies: newDeps });
+                                                dispatch({ type: 'UPDATE_PROJECT', payload: { ...editingProject, dependencies: newDeps } });
+                                            }} className="text-slate-500 hover:text-red-400 transition-colors p-1" title="Delete">
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <button onClick={() => {
-                                        const newDeps = editingProject.dependencies.filter((x:any) => x.id !== d.id);
-                                        setEditingProject({ ...editingProject, dependencies: newDeps });
-                                        dispatch({ type: 'UPDATE_PROJECT', payload: { ...editingProject, dependencies: newDeps } });
-                                    }} className="text-slate-600 hover:text-red-400">
-                                        <Trash2 size={14} />
-                                    </button>
+                                    
+                                    {/* Follow Up Task Trigger */}
+                                    {d.targetDate && (
+                                        <button 
+                                            onClick={() => {
+                                                setReminderData({ days: 0, note: `Follow up on blocker: ${d.what} (${d.who})`, customDate: d.targetDate });
+                                                setIsReminderOpen(true);
+                                                setIsModalOpen(false); // Close project modal to focus on reminder
+                                            }} 
+                                            className="mt-2 flex items-center gap-2 text-xs font-bold text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg w-fit transition-colors"
+                                        >
+                                            <CalendarPlus size={14} /> Remind me on Target Date
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                         </div>

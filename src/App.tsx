@@ -329,6 +329,54 @@ const LoginScreen = () => {
   );
 };
 
+// --- EMOJI RAIN COMPONENT (GIRLY POP EDITION) ---
+const EmojiRain = ({ isActive, onComplete }: { isActive: boolean, onComplete: () => void }) => {
+    const emojis = ['💖', '✨', '🎀', '🌸', '💧', '🫧'];
+    const drops = Array.from({ length: 40 }).map((_, i) => ({
+        id: i,
+        emoji: emojis[Math.floor(Math.random() * emojis.length)],
+        left: Math.random() * 100, // Random horizontal position
+        animationDuration: 1.5 + Math.random() * 1.5, // Between 1.5s and 3s
+        delay: Math.random() * 0.5 // Slight delay for organic feel
+    }));
+
+    useEffect(() => {
+        if (isActive) {
+            const timer = setTimeout(() => {
+                onComplete();
+            }, 3000); // Rains for exactly 3 seconds, then cleans up!
+            return () => clearTimeout(timer);
+        }
+    }, [isActive, onComplete]);
+
+    if (!isActive) return null;
+
+    return (
+        <div className="fixed inset-0 z-[1000] pointer-events-none overflow-hidden">
+            <style>{`
+                @keyframes fall-and-sway {
+                    0% { transform: translateY(-50px) rotate(0deg) scale(0); opacity: 0; }
+                    10% { opacity: 1; transform: translateY(0px) rotate(-10deg) scale(1.5); }
+                    50% { transform: translateY(50vh) rotate(15deg) scale(1.2); }
+                    100% { transform: translateY(110vh) rotate(-15deg) scale(1); opacity: 0.8; }
+                }
+            `}</style>
+            {drops.map((drop) => (
+                <div 
+                    key={drop.id}
+                    className="absolute top-0 text-3xl"
+                    style={{
+                        left: `${drop.left}%`,
+                        animation: `fall-and-sway ${drop.animationDuration}s linear ${drop.delay}s forwards`
+                    }}
+                >
+                    {drop.emoji}
+                </div>
+            ))}
+        </div>
+    );
+};
+
 // --- MAIN APP ---
 function App() {
   const [state, localDispatch] = useReducer(appReducer, initialState);
@@ -345,6 +393,9 @@ function App() {
   
   // QUICK ADD STATE
   const [isQuickTaskOpen, setIsQuickTaskOpen] = useState(false);
+  
+  // VIBES STATE
+  const [isRaining, setIsRaining] = useState(false);
 
   // KEYBOARD SHORTCUT LISTENER (Alt + N)
   useEffect(() => {
@@ -545,19 +596,12 @@ function App() {
                             <div className="flex items-center gap-4 mb-2">
                                 <h2 className="text-3xl font-bold text-white">{getGreeting()}</h2>
                                 <button 
-                                    onClick={() => confetti({
-                                        particleCount: 100,
-                                        spread: 70,
-                                        origin: { y: 0.3 },
-                                        shapes: ['circle'],
-                                        colors: ['#60a5fa', '#3b82f6', '#2563eb'], // Water vibes!
-                                        scalar: 1.5,
-                                        ticks: 60
-                                    })}
-                                    className="p-2 rounded-full bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white transition-all hover:scale-110 active:scale-95 shadow-lg shadow-blue-500/10"
-                                    title="Make it rain"
+                                    onClick={() => setIsRaining(true)}
+                                    disabled={isRaining}
+                                    className="p-2 rounded-full bg-pink-500/10 text-pink-400 hover:bg-pink-500 hover:text-white disabled:opacity-50 transition-all hover:scale-110 active:scale-95 shadow-lg shadow-pink-500/10"
+                                    title="Make it rain vibes"
                                 >
-                                    🌧️
+                                    ✨
                                 </button>
                             </div>
                             <p className="text-slate-400">Here is your focus for {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}.</p>
@@ -691,7 +735,7 @@ function App() {
       
       {/* --- QUICK TASK FLOATING MODAL (ALT + N) --- */}
       {isQuickTaskOpen && (
-        <div className="fixed inset-0 z-[999] flex items-start justify-center pt-[20vh] bg-slate-950/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-[20vh] bg-slate-950/80 backdrop-blur-md p-4">
             <div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden animate-[fadeIn_0.1s_ease-out]">
                 <div className="flex items-center px-4 py-3 bg-slate-800/50 border-b border-slate-700">
                     <Plus size={18} className="text-blue-400 mr-3 shrink-0" />
@@ -734,6 +778,9 @@ function App() {
         tasks={state.tasks} 
         dispatch={dispatch}
       />
+      
+      {/* THE VIBES */}
+      <EmojiRain isActive={isRaining} onComplete={() => setIsRaining(false)} />
 
       <button onClick={() => signOut(auth)} className="fixed bottom-4 left-4 z-50 text-xs text-slate-500 hover:text-white flex items-center gap-2">
         <LogOut size={14} /> Sign Out

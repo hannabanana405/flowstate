@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   FileText, Plus, Trash2, CheckCircle, Loader2, Folder, Search, 
-  ChevronDown, ChevronRight, ChevronLeft 
+  ChevronDown, ChevronRight, ChevronLeft, Bold, Italic, List
 } from 'lucide-react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 
 export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }: any) => {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -12,10 +14,15 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
   const [showArchived, setShowArchived] = useState(false); 
   const [projectFilter, setProjectFilter] = useState('All'); // <-- NEW FILTER STATE
   
-  // --- PROJECT PICKER STATE ---
+  // --- PROJECT PICKER STATE (FOR ACTIVE DOC) ---
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState('');
   const projectPickerRef = useRef<HTMLDivElement>(null);
+
+  // --- FILTER PICKER STATE (FOR SIDEBAR) ---
+  const [isFilterPickerOpen, setIsFilterPickerOpen] = useState(false);
+  const [filterSearch, setFilterSearch] = useState('');
+  const filterPickerRef = useRef<HTMLDivElement>(null);
 
   // --- PAGINATION STATE ---
   const [currentPage, setCurrentPage] = useState(1);
@@ -42,45 +49,65 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
     }
   }, [data.docs, selectedDocId, projects, focusDocId]);
 
-  // When switching docs, load content
-  useEffect(() => {
-    const activeDoc = data.docs.find((d: any) => d.id === selectedDocId);
-    if (activeDoc) {
-      setContent(activeDoc.content || ''); 
-      setStatus('saved');
-    }
-  }, [selectedDocId, data.docs]); 
-
-  // Reset pagination when search or filter changes
-  useEffect(() => {
-      setCurrentPage(1);
-  }, [search, projectFilter]);
-
-  // Close project picker when clicking outside
-  useEffect(() => {
-      const handleClickOutside = (event: MouseEvent) => {
-          if (projectPickerRef.current && !projectPickerRef.current.contains(event.target as Node)) {
-              setIsProjectPickerOpen(false);
-          }
-      };
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // 2. Auto-Save Engine
-  const handleContentChange = (e: any) => {
-    const value = e.target.value;
-    setContent(value); 
+  // 2. Auto-Save Engine (Rewritten for TipTap)
+  const handleContentChange = (newContent: string) => {
+    setContent(newContent); 
     setStatus('saving');
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
     saveTimeoutRef.current = setTimeout(() => {
       if (!selectedDocId) return;
-      dispatch({ type: 'UPDATE_DOC', payload: { id: selectedDocId, content: value } });
+      dispatch({ type: 'UPDATE_DOC', payload: { id: selectedDocId, content: newContent } });
       setStatus('saved');
     }, 1000);
   };
+
+  // Initialize TipTap Editor
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: content,
+    editorProps: {
+        attributes: {
+            class: 'focus:outline-none min-h-full pb-32 text-sm leading-relaxed text-slate-300 tiptap-editor'
+        }
+    },
+    onUpdate: ({ editor }) => {
+      handleContentChange(editor.getHTML());
+    },
+  });
+
+  // When switching docs, load content into TipTap
+  useEffect(() => {
+    const activeDoc = data.docs.find((d: any) => d.id === selectedDocId);
+    if (activeDoc) {
+      const newContent = activeDoc.content || '';
+      setContent(newContent); 
+      if (editor && editor.getHTML() !== newContent) {
+          editor.commands.setContent(newContent);
+      }
+      setStatus('saved');
+    }
+  }, [selectedDocId, data.docs, editor]); 
+
+  // Reset pagination when search or filter changes
+  useEffect(() => {
+      setCurrentPage(1);
+  }, [search, projectFilter]);
+
+  // Close pickers when clicking outside
+  useEffect(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+          if (projectPickerRef.current && !projectPickerRef.current.contains(event.target as Node)) {
+              setIsProjectPickerOpen(false);
+          }
+          if (filterPickerRef.current && !filterPickerRef.current.contains(event.target as Node)) {
+              setIsFilterPickerOpen(false);
+          }
+      };
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const updateDocProject = (newProjectId: string) => {
     if (!selectedDocId) return;
@@ -93,7 +120,16 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
 
   const createDoc = () => {
     const newId = crypto.randomUUID();
-    dispatch({ type: 'ADD_DOC', payload: { id: newId, title: 'Untitled Doc', content: '', projectId: '' } });
+    dispatch({ 
+        type: 'ADD_DOC', 
+        payload: { 
+            id: newId, 
+            title: 'Untitled Doc', 
+            content: '', 
+            projectId: '',
+            createdAt: new Date().toISOString()
+        } 
+    });
     setSelectedDocId(newId);
     setContent('');
     setSearch('');
@@ -114,16 +150,24 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
       return parentProject && parentProject.status === 'Done';
   };
 
-  const allFilteredDocs = data.docs.filter((doc: any) => {
-      // 1. Filter by Project First
-      if (projectFilter !== 'All' && doc.projectId !== projectFilter) return false;
-      
-      // 2. Then Filter by Search
-      const query = search.toLowerCase();
-      const matchTitle = doc.title && doc.title.toLowerCase().includes(query);
-      const matchContent = doc.content && doc.content.toLowerCase().includes(query);
-      return matchTitle || matchContent;
-  });
+  const allFilteredDocs = [...data.docs] // Create a copy so we don't mutate state
+      .reverse() // Puts newly added items at the top by default
+      .filter((doc: any) => {
+          // 1. Filter by Project First
+          if (projectFilter !== 'All' && doc.projectId !== projectFilter) return false;
+          
+          // 2. Then Filter by Search
+          const query = search.toLowerCase();
+          const matchTitle = doc.title && doc.title.toLowerCase().includes(query);
+          const matchContent = doc.content && doc.content.toLowerCase().includes(query);
+          return matchTitle || matchContent;
+      })
+      .sort((a: any, b: any) => {
+          // 3. Keep recently edited docs at the very top
+          const dateA = new Date(a.createdAt || a.lastUpdated || 0).getTime();
+          const dateB = new Date(b.createdAt || b.lastUpdated || 0).getTime();
+          return dateB - dateA;
+      });
 
   const activeDocsList = allFilteredDocs.filter((d:any) => !isDocArchived(d));
   const archivedDocsList = allFilteredDocs.filter((d:any) => isDocArchived(d));
@@ -152,9 +196,16 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
             <FileText size={16} className={`shrink-0 ${selectedDocId === doc.id ? 'text-blue-200' : 'text-slate-500'}`} />
             <span className="truncate">{doc.title || "Untitled Doc"}</span>
         </div>
-        <button onClick={(e) => deleteDoc(doc.id, e)} className={`shrink-0 ml-2 hover:text-red-200 ${selectedDocId === doc.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
-            <Trash2 size={14} />
-        </button>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+            {doc.createdAt && (
+                 <span className={`text-[10px] ${selectedDocId === doc.id ? 'text-blue-300' : 'text-slate-600 group-hover:text-slate-500'}`}>
+                     {new Date(doc.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                 </span>
+            )}
+            <button onClick={(e) => deleteDoc(doc.id, e)} className={`hover:text-red-200 ${selectedDocId === doc.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
+                <Trash2 size={14} />
+            </button>
+        </div>
     </div>
   );
 
@@ -181,17 +232,56 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                  />
             </div>
             
-            {/* --- NEW PROJECT FILTER DROPDOWN --- */}
-            <select 
-                value={projectFilter} 
-                onChange={e => setProjectFilter(e.target.value)} 
-                className="w-full bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg focus:outline-none focus:border-blue-500 text-xs"
-            >
-                <option value="All">All Projects</option>
-                {projects?.filter((p:any) => p.status !== 'Done').map((p:any) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-            </select>
+            {/* --- CUSTOM SEARCHABLE PROJECT FILTER --- */}
+            <div className="relative" ref={filterPickerRef}>
+                <button 
+                    onClick={() => setIsFilterPickerOpen(!isFilterPickerOpen)}
+                    className="w-full flex items-center justify-between bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg hover:bg-slate-800 transition-colors focus:outline-none focus:border-blue-500"
+                >
+                    <span className="text-xs truncate mr-2">
+                        {projectFilter === 'All' ? 'All Projects' : projects?.find((p:any) => p.id === projectFilter)?.name || 'All Projects'}
+                    </span>
+                    <ChevronDown size={14} className="text-slate-500 shrink-0" />
+                </button>
+
+                {isFilterPickerOpen && (
+                    <div className="absolute top-full left-0 mt-1 w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col animate-[fadeIn_0.1s_ease-out]">
+                        <div className="p-2 border-b border-slate-800">
+                            <div className="relative">
+                                <Search className="absolute left-2 top-2 text-slate-500" size={12} />
+                                <input 
+                                    autoFocus
+                                    type="text" 
+                                    placeholder="Find project..." 
+                                    value={filterSearch}
+                                    onChange={(e) => setFilterSearch(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-7 pr-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto p-1 space-y-0.5 custom-scrollbar">
+                            <button 
+                                onClick={() => { setProjectFilter('All'); setIsFilterPickerOpen(false); }} 
+                                className={`w-full text-left px-3 py-2 text-xs rounded-lg transition-colors ${projectFilter === 'All' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                            >
+                                All Projects
+                            </button>
+                            {projects
+                                ?.filter((p:any) => p.status !== 'Done')
+                                .filter((p:any) => p.name.toLowerCase().includes(filterSearch.toLowerCase()))
+                                .map((p:any) => (
+                                <button 
+                                    key={p.id} 
+                                    onClick={() => { setProjectFilter(p.id); setIsFilterPickerOpen(false); }}
+                                    className={`w-full text-left px-3 py-2 text-xs rounded-lg transition-colors truncate ${projectFilter === p.id ? 'bg-blue-600/20 text-blue-400' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+                                >
+                                    {p.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
 
         <div className="flex-1 overflow-y-auto space-y-2 flex flex-col">
@@ -309,14 +399,46 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-hidden bg-slate-900/30 relative">
-                    <textarea 
-                        value={content}
-                        onChange={handleContentChange}
-                        className="w-full h-full bg-transparent p-8 text-slate-300 resize-none focus:outline-none font-mono text-sm leading-relaxed"
-                        placeholder="Start typing your ideas here..."
-                        spellCheck={false}
-                    />
+                <div className="flex-1 overflow-y-auto bg-slate-900/30 relative flex flex-col">
+                    {/* Style block to prevent Tailwind from erasing bullet points inside the editor */}
+                    <style>{`
+                        .tiptap-editor ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+                        .tiptap-editor p { margin-bottom: 0.5rem; }
+                        .tiptap-editor strong { color: #f8fafc; font-weight: 700; }
+                    `}</style>
+                    
+                    {/* Rich Text Toolbar */}
+                    {editor && (
+                        <div className="flex items-center gap-2 p-3 bg-slate-900/80 border-b border-slate-800 shrink-0 sticky top-0 z-10 backdrop-blur-sm">
+                            <button 
+                                onClick={() => editor.chain().focus().toggleBold().run()} 
+                                className={`p-1.5 rounded-lg transition-colors ${editor.isActive('bold') ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                                title="Bold (Cmd+B)"
+                            >
+                                <Bold size={16} />
+                            </button>
+                            <button 
+                                onClick={() => editor.chain().focus().toggleItalic().run()} 
+                                className={`p-1.5 rounded-lg transition-colors ${editor.isActive('italic') ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                                title="Italic (Cmd+I)"
+                            >
+                                <Italic size={16} />
+                            </button>
+                            <div className="w-px h-4 bg-slate-700 mx-1"></div>
+                            <button 
+                                onClick={() => editor.chain().focus().toggleBulletList().run()} 
+                                className={`p-1.5 rounded-lg transition-colors ${editor.isActive('bulletList') ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                                title="Bullet List"
+                            >
+                                <List size={16} />
+                            </button>
+                        </div>
+                    )}
+                    
+                    {/* The Actual Editor Canvas */}
+                    <div className="flex-1 p-8 cursor-text" onClick={() => editor?.commands.focus()}>
+                        <EditorContent editor={editor} className="h-full" />
+                    </div>
                 </div>
              </>
          ) : (

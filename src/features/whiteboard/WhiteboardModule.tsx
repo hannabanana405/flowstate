@@ -17,10 +17,15 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
   
-  // --- PROJECT PICKER STATE ---
+  // --- PROJECT PICKER STATE (FOR ACTIVE BOARD) ---
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState('');
   const projectPickerRef = useRef<HTMLDivElement>(null);
+
+  // --- FILTER PICKER STATE (FOR SIDEBAR) ---
+  const [isFilterPickerOpen, setIsFilterPickerOpen] = useState(false);
+  const [filterSearch, setFilterSearch] = useState('');
+  const filterPickerRef = useRef<HTMLDivElement>(null);
   
   const saveTimeoutRef = useRef<any>(null);
   const deletingBoardIdRef = useRef<string | null>(null); // Stops Zombie Boards!
@@ -56,11 +61,14 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
     setCurrentPage(1);
   }, [search, projectFilter]);
 
-  // Close picker when clicking outside
+  // Close pickers when clicking outside
   useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
           if (projectPickerRef.current && !projectPickerRef.current.contains(event.target as Node)) {
               setIsProjectPickerOpen(false);
+          }
+          if (filterPickerRef.current && !filterPickerRef.current.contains(event.target as Node)) {
+              setIsFilterPickerOpen(false);
           }
       };
       document.addEventListener('mousedown', handleClickOutside);
@@ -192,17 +200,56 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                  />
             </div>
 
-            {/* --- NEW PROJECT FILTER DROPDOWN --- */}
-            <select 
-                value={projectFilter} 
-                onChange={e => setProjectFilter(e.target.value)} 
-                className="w-full bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg focus:outline-none focus:border-blue-500 text-xs"
-            >
-                <option value="All">All Projects</option>
-                {data.projects?.filter((p:any) => p.status !== 'Done').map((p:any) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-            </select>
+            {/* --- CUSTOM SEARCHABLE PROJECT FILTER --- */}
+            <div className="relative" ref={filterPickerRef}>
+                <button 
+                    onClick={() => setIsFilterPickerOpen(!isFilterPickerOpen)}
+                    className="w-full flex items-center justify-between bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg hover:bg-slate-800 transition-colors focus:outline-none focus:border-blue-500"
+                >
+                    <span className="text-xs truncate mr-2">
+                        {projectFilter === 'All' ? 'All Projects' : data.projects?.find((p:any) => p.id === projectFilter)?.name || 'All Projects'}
+                    </span>
+                    <ChevronDown size={14} className="text-slate-500 shrink-0" />
+                </button>
+
+                {isFilterPickerOpen && (
+                    <div className="absolute top-full left-0 mt-1 w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col animate-[fadeIn_0.1s_ease-out]">
+                        <div className="p-2 border-b border-slate-800">
+                            <div className="relative">
+                                <Search className="absolute left-2 top-2 text-slate-500" size={12} />
+                                <input 
+                                    autoFocus
+                                    type="text" 
+                                    placeholder="Find project..." 
+                                    value={filterSearch}
+                                    onChange={(e) => setFilterSearch(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-7 pr-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto p-1 space-y-0.5 custom-scrollbar">
+                            <button 
+                                onClick={() => { setProjectFilter('All'); setIsFilterPickerOpen(false); }} 
+                                className={`w-full text-left px-3 py-2 text-xs rounded-lg transition-colors ${projectFilter === 'All' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                            >
+                                All Projects
+                            </button>
+                            {data.projects
+                                ?.filter((p:any) => p.status !== 'Done')
+                                .filter((p:any) => p.name.toLowerCase().includes(filterSearch.toLowerCase()))
+                                .map((p:any) => (
+                                <button 
+                                    key={p.id} 
+                                    onClick={() => { setProjectFilter(p.id); setIsFilterPickerOpen(false); }}
+                                    className={`w-full text-left px-3 py-2 text-xs rounded-lg transition-colors truncate ${projectFilter === p.id ? 'bg-blue-600/20 text-blue-400' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+                                >
+                                    {p.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
 
         {/* List */}
