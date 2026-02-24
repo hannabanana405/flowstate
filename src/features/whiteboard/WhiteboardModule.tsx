@@ -23,6 +23,16 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
   const projectPickerRef = useRef<HTMLDivElement>(null);
   
   const saveTimeoutRef = useRef<any>(null);
+  const deletingBoardIdRef = useRef<string | null>(null); // Stops Zombie Boards!
+
+  const deleteBoard = (id: string, e: any) => {
+      e.stopPropagation();
+      if (confirm('Are you sure you want to delete this board?')) {
+          deletingBoardIdRef.current = id; // Flag it so the auto-saver doesn't resurrect it
+          if (selectedBoardId === id) setSelectedBoardId(null); // Clear selection instantly
+          dispatch({ type: 'DELETE_WHITEBOARD', payload: id });
+      }
+  };
 
   // [DELETED] The manual assetUrls block was here. Removing it fixes the crash.
 
@@ -58,16 +68,23 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
   }, []);
 
 // FILTER & PAGINATION LOGIC
-  const filteredBoards = data.whiteboards.filter((wb: any) => {
-    // 1. Filter by Project First
-    if (projectFilter !== 'All' && wb.projectId !== projectFilter) return false;
+  const filteredBoards = [...data.whiteboards] // Create a copy so we don't mutate state
+    .reverse() // Puts newly added items at the top by default
+    .filter((wb: any) => {
+      // 1. Filter by Project First
+      if (projectFilter !== 'All' && wb.projectId !== projectFilter) return false;
 
-    // 2. Then Filter by Search
-    const boardName = wb.name || ''; 
-    const searchTerm = search || '';
-    return boardName.toLowerCase().includes(searchTerm.toLowerCase());
-  });
-
+      // 2. Then Filter by Search
+      const boardName = wb.name || ''; 
+      const searchTerm = search || '';
+      return boardName.toLowerCase().includes(searchTerm.toLowerCase());
+    })
+    .sort((a: any, b: any) => {
+      // 3. Keep recently edited boards at the very top
+      const dateA = new Date(a.lastUpdated || a.createdAt || 0).getTime();
+      const dateB = new Date(b.lastUpdated || b.createdAt || 0).getTime();
+      return dateB - dateA;
+    });
   const totalPages = Math.ceil(filteredBoards.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedBoards = filteredBoards.slice(startIndex, startIndex + ITEMS_PER_PAGE);
@@ -95,7 +112,7 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
     const handleChange = () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        if (!editorInstance) return;
+        if (!editorInstance || !activeBoard) return;
         const { document, session } = getSnapshot(editorInstance.store);
         
         // UPDATE TIMESTAMP LOGIC
@@ -112,14 +129,16 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
 
     const cleanupListener = editorInstance.store.listen(handleChange);
 
-// THE FIX: Force save when the component closes!
+    // THE FIX: Force save when the component closes!
     return () => {
       cleanupListener();
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current); 
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); 
         
-        // 👇 ADDED SAFETY CHECK: Only save if the editor didn't crash
-        if (editorInstance && editorInstance.store) {
+      // ZOMBIE KILLER: If we just clicked delete, DO NOT auto-save!
+      if (activeBoard && deletingBoardIdRef.current === activeBoard.id) return;
+
+      // 👇 ADDED SAFETY CHECK: Only save if the editor didn't crash
+      if (editorInstance && editorInstance.store && activeBoard) {
             const { document, session } = getSnapshot(editorInstance.store);
             dispatch({ 
               type: 'UPDATE_WHITEBOARD', 
@@ -130,7 +149,6 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
               } 
             });
         }
-      }
     };
   }, [activeBoard, dispatch]);
 
@@ -194,10 +212,10 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                     <div 
                         key={wb.id} 
                         onClick={() => setSelectedBoardId(wb.id)} 
-                        className={`p-2 rounded cursor-pointer text-sm truncate group relative flex justify-between items-center ${selectedBoardId === wb.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+                        className={`p-2 rounded cursor-pointer text-sm truncate group relative flex justify-between items-center ${selectedBoardId === wb.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800'}`}
                     >
-                        <span className="truncate pr-2">{wb.name}</span>
-                        <button onClick={e => { e.stopPropagation(); if (confirm('Delete?')) dispatch({ type: 'DELETE_WHITEBOARD', payload: wb.id }); }} className={`hover:text-red-400 ${selectedBoardId === wb.id ? 'text-white' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <span className="truncate pr-2">{wb.name || "Untitled Board"}</span>
+                        <button onClick={(e) => deleteBoard(wb.id, e)} className={`hover:text-red-400 ${selectedBoardId === wb.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
                             <Trash2 size={14} />
                         </button>
                     </div>
@@ -248,8 +266,9 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                  {/* Title Input */}
                  <input 
                     className="bg-slate-900/80 backdrop-blur border border-slate-700 rounded-full px-4 py-1 text-center text-sm font-bold text-slate-300 focus:text-white focus:outline-none focus:border-blue-500 transition-colors w-64 shadow-xl" 
-                    value={activeBoard.name} 
+                    value={activeBoard.name || ''} 
                     onChange={e => dispatch({ type: 'UPDATE_WHITEBOARD', payload: { id: activeBoard.id, name: e.target.value } })} 
+                    placeholder="Untitled Board"
                  />
 
                  {/* Controls Row */}

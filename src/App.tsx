@@ -2,7 +2,7 @@ import { useState, useEffect, useReducer, Suspense, lazy } from 'react';
 import { 
   LayoutDashboard, CheckSquare, Briefcase, FileText, PenTool, 
   LogOut, Smartphone, Settings, Clock, AlertCircle, ArrowRight,
-  Moon, Sun, CalendarDays, X
+  Moon, Sun, CalendarDays, X, Plus
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -342,6 +342,24 @@ function App() {
 
   // SHUTDOWN STATE
   const [isShutdownOpen, setIsShutdownOpen] = useState(false);
+  
+  // QUICK ADD STATE
+  const [isQuickTaskOpen, setIsQuickTaskOpen] = useState(false);
+
+  // KEYBOARD SHORTCUT LISTENER (Alt + N)
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if (e.altKey && e.key.toLowerCase() === 'n') {
+              e.preventDefault(); // Stop default browser behavior
+              setIsQuickTaskOpen(true);
+          }
+          if (e.key === 'Escape') {
+              setIsQuickTaskOpen(false);
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // 1. Auth Listener
   useEffect(() => {
@@ -489,14 +507,59 @@ function App() {
         onShutdown={() => setIsShutdownOpen(true)}
       />
       
-      <main className="flex-1 ml-64 p-8 overflow-y-auto h-screen relative z-10">
-        <Suspense fallback={<LoadingFallback />}>
+      <main className="flex-1 ml-64 flex flex-col h-screen relative z-10 overflow-hidden">
+        {/* --- UNIVERSAL QUICK TASK BAR --- */}
+        <div className="w-full bg-slate-950/80 backdrop-blur-md border-b border-slate-800 p-4 shrink-0 z-30">
+            <div className="max-w-4xl mx-auto relative group flex items-center">
+                <Plus size={18} className="absolute left-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                <input 
+                    type="text"
+                    placeholder="Quick Add Task... (Press Enter to save)"
+                    className="w-full bg-slate-900/50 border border-slate-700 rounded-xl pl-12 pr-4 py-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:bg-slate-900 transition-all shadow-inner"
+                    onKeyDown={(e: any) => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                            dispatch({ 
+                                type: 'ADD_TASK', 
+                                payload: { 
+                                    title: e.target.value.trim(), 
+                                    ice: 5,
+                                    dueDate: getToday() // <-- Defaults to Today!
+                                } 
+                            });
+                            e.target.value = '';
+                            confetti({ particleCount: 30, spread: 50, origin: { y: 0.1 } }); // Tiny celebration!
+                        }
+                    }}
+                />
+            </div>
+        </div>
+
+        {/* Scrollable Content Area */}
+        <div className="flex-1 overflow-y-auto p-8 relative">
+          <Suspense fallback={<LoadingFallback />}>
             {activeTab === 'dashboard' && (
                 <div className="space-y-8 animate-[fadeIn_0.5s_ease-out]">
                     <div className="flex justify-between items-end border-b border-slate-800 pb-6">
                         <div>
-                            {/* --- THE GREETING --- */}
-                            <h2 className="text-3xl font-bold text-white mb-2">{getGreeting()}</h2>
+                            {/* --- THE GREETING + RAIN BUTTON --- */}
+                            <div className="flex items-center gap-4 mb-2">
+                                <h2 className="text-3xl font-bold text-white">{getGreeting()}</h2>
+                                <button 
+                                    onClick={() => confetti({
+                                        particleCount: 100,
+                                        spread: 70,
+                                        origin: { y: 0.3 },
+                                        shapes: ['circle'],
+                                        colors: ['#60a5fa', '#3b82f6', '#2563eb'], // Water vibes!
+                                        scalar: 1.5,
+                                        ticks: 60
+                                    })}
+                                    className="p-2 rounded-full bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white transition-all hover:scale-110 active:scale-95 shadow-lg shadow-blue-500/10"
+                                    title="Make it rain"
+                                >
+                                    🌧️
+                                </button>
+                            </div>
                             <p className="text-slate-400">Here is your focus for {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}.</p>
                         </div>
                         <div className="flex gap-4 text-sm text-slate-500">
@@ -622,12 +685,51 @@ function App() {
             )}
             
             {activeTab === 'settings' && <SettingsModule data={state} dispatch={dispatch} />}
-        </Suspense>
+          </Suspense>
+        </div>
       </main>
       
+      {/* --- QUICK TASK FLOATING MODAL (ALT + N) --- */}
+      {isQuickTaskOpen && (
+        <div className="fixed inset-0 z-[999] flex items-start justify-center pt-[20vh] bg-slate-950/60 backdrop-blur-sm p-4">
+            <div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden animate-[fadeIn_0.1s_ease-out]">
+                <div className="flex items-center px-4 py-3 bg-slate-800/50 border-b border-slate-700">
+                    <Plus size={18} className="text-blue-400 mr-3 shrink-0" />
+                    <input 
+                        autoFocus
+                        type="text"
+                        placeholder="Quick Add Task... (Press Enter to save)"
+                        className="w-full bg-transparent text-lg text-white placeholder-slate-500 focus:outline-none"
+                        onKeyDown={(e: any) => {
+                            if (e.key === 'Enter' && e.target.value.trim()) {
+                                dispatch({ 
+                                    type: 'ADD_TASK', 
+                                    payload: { 
+                                        title: e.target.value.trim(), 
+                                        ice: 5, 
+                                        dueDate: getToday() // <-- Defaults to Today!
+                                    } 
+                                });
+                                confetti({ particleCount: 30, spread: 50, origin: { y: 0.2 } });
+                                setIsQuickTaskOpen(false); // Close modal instantly
+                            }
+                        }}
+                    />
+                    <button onClick={() => setIsQuickTaskOpen(false)} className="text-slate-500 hover:text-white ml-2 shrink-0">
+                        <X size={18} />
+                    </button>
+                </div>
+                <div className="px-4 py-2 bg-slate-900 text-[10px] text-slate-500 flex justify-between font-mono">
+                    <span>Date defaults to Today.</span>
+                    <span>Press <kbd className="bg-slate-800 px-1 py-0.5 rounded text-slate-400">ESC</kbd> to close</span>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* SHUTDOWN WIZARD OVERLAY */}
       <ShutdownWizard 
-        isOpen={isShutdownOpen} 
+        isOpen={isShutdownOpen}
         onClose={() => setIsShutdownOpen(false)} 
         tasks={state.tasks} 
         dispatch={dispatch}

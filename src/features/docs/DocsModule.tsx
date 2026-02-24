@@ -147,11 +147,12 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
         onClick={() => setSelectedDocId(doc.id)} 
         className={`p-3 rounded-xl cursor-pointer text-sm group relative flex justify-between items-center transition-all ${selectedDocId === doc.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800'}`}
     >
-        <div className="flex items-center gap-3 truncate">
-            <FileText size={16} className={selectedDocId === doc.id ? 'text-blue-200' : 'text-slate-500'} />
-            <span className="truncate">{doc.title}</span>
+        <div className="flex items-center gap-3 truncate min-w-0">
+            {/* Added shrink-0 so flexbox stops squishing the icon */}
+            <FileText size={16} className={`shrink-0 ${selectedDocId === doc.id ? 'text-blue-200' : 'text-slate-500'}`} />
+            <span className="truncate">{doc.title || "Untitled Doc"}</span>
         </div>
-        <button onClick={(e) => deleteDoc(doc.id, e)} className={`hover:text-red-200 ${selectedDocId === doc.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
+        <button onClick={(e) => deleteDoc(doc.id, e)} className={`shrink-0 ml-2 hover:text-red-200 ${selectedDocId === doc.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
             <Trash2 size={14} />
         </button>
     </div>
