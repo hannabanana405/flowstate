@@ -1,30 +1,31 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   FileText, Plus, Trash2, CheckCircle, Loader2, Folder, Search, 
   ChevronDown, ChevronRight, ChevronLeft, Bold, Italic, List
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import { useDataStore } from '../../stores/useDataStore'; // <-- NEW STORE IMPORT!
 
-export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }: any) => {
+// 👇 NO MORE PROPS (Except focus routing)
+export const DocsModule = ({ focusDocId, clearFocus }: any) => {
+  const { docs, projects, saveItem, deleteItem } = useDataStore(); // <-- DIRECT ACCESS
+
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [content, setContent] = useState(''); 
   const [status, setStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false); 
-  const [projectFilter, setProjectFilter] = useState('All'); // <-- NEW FILTER STATE
+  const [projectFilter, setProjectFilter] = useState('All'); 
   
-  // --- PROJECT PICKER STATE (FOR ACTIVE DOC) ---
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState('');
   const projectPickerRef = useRef<HTMLDivElement>(null);
 
-  // --- FILTER PICKER STATE (FOR SIDEBAR) ---
   const [isFilterPickerOpen, setIsFilterPickerOpen] = useState(false);
   const [filterSearch, setFilterSearch] = useState('');
   const filterPickerRef = useRef<HTMLDivElement>(null);
 
-  // --- PAGINATION STATE ---
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
@@ -40,16 +41,16 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
 
   // 1. Load Document Logic (Fallback if no focus)
   useEffect(() => {
-    if (!selectedDocId && !focusDocId && data.docs && data.docs.length > 0) {
-      const firstActive = data.docs.find((d:any) => {
-          const p = projects?.find((proj:any) => proj.id === d.projectId);
+    if (!selectedDocId && !focusDocId && docs && docs.length > 0) {
+      const firstActive = docs.find((d:any) => {
+          const p = projects.find((proj:any) => proj.id === d.projectId);
           return !p || p.status !== 'Done';
       });
-      setSelectedDocId(firstActive ? firstActive.id : data.docs[0].id);
+      setSelectedDocId(firstActive ? firstActive.id : docs[0].id);
     }
-  }, [data.docs, selectedDocId, projects, focusDocId]);
+  }, [docs, selectedDocId, projects, focusDocId]);
 
-  // 2. Auto-Save Engine (Rewritten for TipTap)
+  // 2. Auto-Save Engine (Using Direct Store Save)
   const handleContentChange = (newContent: string) => {
     setContent(newContent); 
     setStatus('saving');
@@ -58,7 +59,7 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
 
     saveTimeoutRef.current = setTimeout(() => {
       if (!selectedDocId) return;
-      dispatch({ type: 'UPDATE_DOC', payload: { id: selectedDocId, content: newContent } });
+      saveItem('docs', { id: selectedDocId, content: newContent }); // <-- NEW SAVE LOGIC
       setStatus('saved');
     }, 1000);
   };
@@ -77,18 +78,21 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
     },
   });
 
-  // When switching docs, load content into TipTap
+  // 👇 THE CURSOR-JUMP FIX 👇
+  // ONLY run this when you click a different document in the sidebar!
   useEffect(() => {
-    const activeDoc = data.docs.find((d: any) => d.id === selectedDocId);
+    if (!editor || !selectedDocId) return;
+    
+    const activeDoc = docs.find((d: any) => d.id === selectedDocId);
     if (activeDoc) {
       const newContent = activeDoc.content || '';
       setContent(newContent); 
-      if (editor && editor.getHTML() !== newContent) {
-          editor.commands.setContent(newContent);
-      }
+      // Force TipTap to update only when switching documents
+      editor.commands.setContent(newContent);
       setStatus('saved');
     }
-  }, [selectedDocId, data.docs, editor]); 
+    // DO NOT put `docs` in this dependency array!
+  }, [selectedDocId, editor]); 
 
   // Reset pagination when search or filter changes
   useEffect(() => {
@@ -98,12 +102,8 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
   // Close pickers when clicking outside
   useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
-          if (projectPickerRef.current && !projectPickerRef.current.contains(event.target as Node)) {
-              setIsProjectPickerOpen(false);
-          }
-          if (filterPickerRef.current && !filterPickerRef.current.contains(event.target as Node)) {
-              setIsFilterPickerOpen(false);
-          }
+          if (projectPickerRef.current && !projectPickerRef.current.contains(event.target as Node)) setIsProjectPickerOpen(false);
+          if (filterPickerRef.current && !filterPickerRef.current.contains(event.target as Node)) setIsFilterPickerOpen(false);
       };
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -112,7 +112,7 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
   const updateDocProject = (newProjectId: string) => {
     if (!selectedDocId) return;
     setStatus('saving');
-    dispatch({ type: 'UPDATE_DOC', payload: { id: selectedDocId, projectId: newProjectId } });
+    saveItem('docs', { id: selectedDocId, projectId: newProjectId }); // <-- NEW SAVE
     setIsProjectPickerOpen(false); 
     setProjectSearch(''); 
     setTimeout(() => setStatus('saved'), 500);
@@ -120,71 +120,77 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
 
   const createDoc = () => {
     const newId = crypto.randomUUID();
-    dispatch({ 
-        type: 'ADD_DOC', 
-        payload: { 
-            id: newId, 
-            title: 'Untitled Doc', 
-            content: '', 
-            projectId: '',
-            createdAt: new Date().toISOString()
-        } 
+    saveItem('docs', { 
+        id: newId, 
+        title: 'Untitled Doc', 
+        content: '', 
+        projectId: '',
+        createdAt: new Date().toISOString()
     });
     setSelectedDocId(newId);
     setContent('');
     setSearch('');
   };
 
-  const deleteDoc = (id: string, e: any) => {
+  const handleDeleteDoc = (id: string, e: any) => {
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this document?')) {
-        dispatch({ type: 'DELETE_DOC', payload: id });
+        deleteItem('docs', id); // <-- NEW DELETE
         if (selectedDocId === id) setSelectedDocId(null);
     }
   };
 
-  // 3. SMART SORTING & PAGINATION LOGIC
-  const isDocArchived = (doc: any) => {
-      if (!doc.projectId) return false; 
-      const parentProject = projects?.find((p:any) => p.id === doc.projectId);
-      return parentProject && parentProject.status === 'Done';
-  };
+  // 👇 THE USE-MEMO SUPERCHARGER 👇
+  const { activeDocsList, archivedDocsList } = useMemo(() => {
+      const active: any[] = [];
+      const archived: any[] = [];
+      const query = search.toLowerCase();
 
-  const allFilteredDocs = [...data.docs] // Create a copy so we don't mutate state
-      .reverse() // Puts newly added items at the top by default
-      .filter((doc: any) => {
-          // 1. Filter by Project First
-          if (projectFilter !== 'All' && doc.projectId !== projectFilter) return false;
-          
-          // 2. Then Filter by Search
-          const query = search.toLowerCase();
+      // Pre-map projects for O(1) instantaneous lookup (Prevents Array.find inside loops)
+      const projectStatusMap = projects.reduce((acc: any, p: any) => {
+          acc[p.id] = p.status;
+          return acc;
+      }, {});
+
+      docs.forEach((doc: any) => {
+          // Filter by Project
+          if (projectFilter !== 'All' && doc.projectId !== projectFilter) return;
+
+          // Filter by Search
           const matchTitle = doc.title && doc.title.toLowerCase().includes(query);
           const matchContent = doc.content && doc.content.toLowerCase().includes(query);
-          return matchTitle || matchContent;
-      })
-      .sort((a: any, b: any) => {
-          // 3. Keep recently edited docs at the very top
-          const dateA = new Date(a.createdAt || a.lastUpdated || 0).getTime();
-          const dateB = new Date(b.createdAt || b.lastUpdated || 0).getTime();
-          return dateB - dateA;
+          
+          if (matchTitle || matchContent) {
+              const isArchived = projectStatusMap[doc.projectId] === 'Done';
+              if (isArchived) archived.push(doc);
+              else active.push(doc);
+          }
       });
 
-  const activeDocsList = allFilteredDocs.filter((d:any) => !isDocArchived(d));
-  const archivedDocsList = allFilteredDocs.filter((d:any) => isDocArchived(d));
+      // Sort both arrays (recent first)
+      const sortByDate = (a: any, b: any) => {
+          const dateA = new Date(a.lastUpdated || a.createdAt || 0).getTime();
+          const dateB = new Date(b.lastUpdated || b.createdAt || 0).getTime();
+          return dateB - dateA;
+      };
+
+      active.sort(sortByDate);
+      archived.sort(sortByDate);
+
+      return { activeDocsList: active, archivedDocsList: archived };
+  }, [docs, projects, search, projectFilter]);
 
   const totalPages = Math.ceil(activeDocsList.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedActiveDocs = activeDocsList.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-  const activeDoc = data.docs.find((d: any) => d.id === selectedDocId);
-  const activeProject = projects?.find((p:any) => p.id === activeDoc?.projectId);
+  const activeDoc = docs.find((d: any) => d.id === selectedDocId);
+  const activeProject = projects.find((p:any) => p.id === activeDoc?.projectId);
 
-  // Filter projects for the picker
-  const pickerFilteredProjects = projects?.filter((p:any) => 
+  const pickerFilteredProjects = projects.filter((p:any) => 
       p.name.toLowerCase().includes(projectSearch.toLowerCase())
-  ) || [];
+  );
 
-  // Helper to render a doc item
   const renderDocItem = (doc: any) => (
     <div 
         key={doc.id} 
@@ -192,7 +198,6 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
         className={`p-3 rounded-xl cursor-pointer text-sm group relative flex justify-between items-center transition-all ${selectedDocId === doc.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800'}`}
     >
         <div className="flex items-center gap-3 truncate min-w-0">
-            {/* Added shrink-0 so flexbox stops squishing the icon */}
             <FileText size={16} className={`shrink-0 ${selectedDocId === doc.id ? 'text-blue-200' : 'text-slate-500'}`} />
             <span className="truncate">{doc.title || "Untitled Doc"}</span>
         </div>
@@ -202,7 +207,7 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                      {new Date(doc.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                  </span>
             )}
-            <button onClick={(e) => deleteDoc(doc.id, e)} className={`hover:text-red-200 ${selectedDocId === doc.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
+            <button onClick={(e) => handleDeleteDoc(doc.id, e)} className={`hover:text-red-200 ${selectedDocId === doc.id ? 'text-blue-200' : 'opacity-0 group-hover:opacity-100'}`}>
                 <Trash2 size={14} />
             </button>
         </div>
@@ -232,14 +237,13 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                  />
             </div>
             
-            {/* --- CUSTOM SEARCHABLE PROJECT FILTER --- */}
             <div className="relative" ref={filterPickerRef}>
                 <button 
                     onClick={() => setIsFilterPickerOpen(!isFilterPickerOpen)}
                     className="w-full flex items-center justify-between bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg hover:bg-slate-800 transition-colors focus:outline-none focus:border-blue-500"
                 >
                     <span className="text-xs truncate mr-2">
-                        {projectFilter === 'All' ? 'All Projects' : projects?.find((p:any) => p.id === projectFilter)?.name || 'All Projects'}
+                        {projectFilter === 'All' ? 'All Projects' : projects.find((p:any) => p.id === projectFilter)?.name || 'All Projects'}
                     </span>
                     <ChevronDown size={14} className="text-slate-500 shrink-0" />
                 </button>
@@ -327,12 +331,11 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                     <input 
                         className="bg-transparent text-xl font-bold text-slate-200 focus:outline-none flex-1" 
                         value={activeDoc.title}
-                        onChange={(e) => dispatch({ type: 'UPDATE_DOC', payload: { id: activeDoc.id, title: e.target.value } })}
+                        onChange={(e) => saveItem('docs', { id: activeDoc.id, title: e.target.value })}
                         placeholder="Untitled Document"
                     />
 
                     <div className="flex items-center gap-3">
-                        {/* SEARCHABLE PROJECT PICKER */}
                         <div className="relative" ref={projectPickerRef}>
                             <button 
                                 onClick={() => setIsProjectPickerOpen(!isProjectPickerOpen)}
@@ -400,14 +403,12 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                 </div>
 
                 <div className="flex-1 overflow-y-auto bg-slate-900/30 relative flex flex-col">
-                    {/* Style block to prevent Tailwind from erasing bullet points inside the editor */}
                     <style>{`
                         .tiptap-editor ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
                         .tiptap-editor p { margin-bottom: 0.5rem; }
                         .tiptap-editor strong { color: #f8fafc; font-weight: 700; }
                     `}</style>
                     
-                    {/* Rich Text Toolbar */}
                     {editor && (
                         <div className="flex items-center gap-2 p-3 bg-slate-900/80 border-b border-slate-800 shrink-0 sticky top-0 z-10 backdrop-blur-sm">
                             <button 
@@ -435,7 +436,6 @@ export const DocsModule = ({ data, projects, dispatch, focusDocId, clearFocus }:
                         </div>
                     )}
                     
-                    {/* The Actual Editor Canvas */}
                     <div className="flex-1 p-8 cursor-text" onClick={() => editor?.commands.focus()}>
                         <EditorContent editor={editor} className="h-full" />
                     </div>

@@ -1,17 +1,24 @@
-import { useState, useEffect, useCallback, useRef } from 'react'; // Removed useMemo
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Tldraw, Editor, getSnapshot, loadSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { Trash2, Plus, Link, Calendar, Clock, Search, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
+import { useDataStore } from '../../stores/useDataStore'; // <-- NEW STORE IMPORT!
 
-export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: any) => {
+// 👇 NO MORE DATA OR DISPATCH PROPS!
+export const WhiteboardModule = ({ focusBoardId, clearFocus }: any) => {
+  const { whiteboards, projects, saveItem, deleteItem } = useDataStore(); // <-- DIRECT STORE ACCESS
+
   const licenseKey = import.meta.env.VITE_TLDRAW_KEY;
   
-  // 👇 ADD THIS LINE: Only use the key if we are NOT on localhost
+  // Only use the key if we are NOT on localhost
   const safeLicenseKey = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? undefined : licenseKey;
 
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [projectFilter, setProjectFilter] = useState('All'); // <-- NEW FILTER STATE
+  const [projectFilter, setProjectFilter] = useState('All');
+  
+  // --- TLDRAW EDITOR STATE ---
+  const [editor, setEditor] = useState<Editor | null>(null);
   
   // --- PAGINATION STATE ---
   const [currentPage, setCurrentPage] = useState(1);
@@ -28,18 +35,16 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
   const filterPickerRef = useRef<HTMLDivElement>(null);
   
   const saveTimeoutRef = useRef<any>(null);
-  const deletingBoardIdRef = useRef<string | null>(null); // Stops Zombie Boards!
+  const deletingBoardIdRef = useRef<string | null>(null);
 
   const deleteBoard = (id: string, e: any) => {
       e.stopPropagation();
       if (confirm('Are you sure you want to delete this board?')) {
-          deletingBoardIdRef.current = id; // Flag it so the auto-saver doesn't resurrect it
-          if (selectedBoardId === id) setSelectedBoardId(null); // Clear selection instantly
-          dispatch({ type: 'DELETE_WHITEBOARD', payload: id });
+          deletingBoardIdRef.current = id;
+          if (selectedBoardId === id) setSelectedBoardId(null);
+          deleteItem('whiteboards', id); // <-- DIRECT STORE DELETE
       }
   };
-
-  // [DELETED] The manual assetUrls block was here. Removing it fixes the crash.
 
   // 0. HANDLE FOCUS
   useEffect(() => {
@@ -51,10 +56,10 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
 
   // 2. Select first board on load
   useEffect(() => {
-    if (!selectedBoardId && !focusBoardId && data.whiteboards.length > 0) {
-      setSelectedBoardId(data.whiteboards[0].id);
+    if (!selectedBoardId && !focusBoardId && whiteboards.length > 0) {
+      setSelectedBoardId(whiteboards[0].id);
     }
-  }, [data.whiteboards, selectedBoardId, focusBoardId]);
+  }, [whiteboards, selectedBoardId, focusBoardId]);
 
   // Reset pagination on search or filter change
   useEffect(() => {
@@ -75,94 +80,80 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
       return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-// FILTER & PAGINATION LOGIC
-  const filteredBoards = [...data.whiteboards] // Create a copy so we don't mutate state
-    .reverse() // Puts newly added items at the top by default
-    .filter((wb: any) => {
-      // 1. Filter by Project First
-      if (projectFilter !== 'All' && wb.projectId !== projectFilter) return false;
-
-      // 2. Then Filter by Search
-      const boardName = wb.name || ''; 
-      const searchTerm = search || '';
-      return boardName.toLowerCase().includes(searchTerm.toLowerCase());
-    })
-    .sort((a: any, b: any) => {
-      // 3. Keep recently edited boards at the very top
-      const dateA = new Date(a.lastUpdated || a.createdAt || 0).getTime();
-      const dateB = new Date(b.lastUpdated || b.createdAt || 0).getTime();
-      return dateB - dateA;
-    });
+  // 👇 ADDED USE-MEMO FOR PERFORMANCE 👇
+  const filteredBoards = useMemo(() => {
+      return [...whiteboards]
+        .reverse()
+        .filter((wb: any) => {
+          if (projectFilter !== 'All' && wb.projectId !== projectFilter) return false;
+          const boardName = wb.name || ''; 
+          const searchTerm = search || '';
+          return boardName.toLowerCase().includes(searchTerm.toLowerCase());
+        })
+        .sort((a: any, b: any) => {
+          const dateA = new Date(a.lastUpdated || a.createdAt || 0).getTime();
+          const dateB = new Date(b.lastUpdated || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+  }, [whiteboards, projectFilter, search]);
+    
   const totalPages = Math.ceil(filteredBoards.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedBoards = filteredBoards.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-  const activeBoard = data.whiteboards.find((w:any) => w.id === selectedBoardId);
-  const activeProject = data.projects.find((p:any) => p.id === activeBoard?.projectId);
+  const activeBoard = whiteboards.find((w:any) => w.id === selectedBoardId);
+  const activeProject = projects.find((p:any) => p.id === activeBoard?.projectId);
 
-  // Filter projects for picker
-  const pickerFilteredProjects = data.projects.filter((p:any) => 
+  const pickerFilteredProjects = projects.filter((p:any) => 
       p.name.toLowerCase().includes(projectSearch.toLowerCase())
   );
 
   // 3. Handle Mounting
   const handleMount = useCallback((editorInstance: Editor) => {
-    // Load Data
+    setEditor(editorInstance);
+    
     if (activeBoard?.snapshot) {
       try {
         loadSnapshot(editorInstance.store, activeBoard.snapshot);
       } catch (e) {
         console.error("Failed to load snapshot", e);
-        editorInstance.store.clear();
       }
     }
+  }, [activeBoard?.id]); // Only recreate if the actual ID changes
+
+  // 4. Proper React Auto-Save
+  useEffect(() => {
+    if (!editor || !activeBoard) return;
 
     const handleChange = () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      
       saveTimeoutRef.current = setTimeout(() => {
-        if (!editorInstance || !activeBoard) return;
-        const { document, session } = getSnapshot(editorInstance.store);
+        // ZOMBIE KILLER: Stop saving if we are actively deleting this board
+        if (deletingBoardIdRef.current === activeBoard.id) return;
+
+        const { document, session } = getSnapshot(editor.store);
         
-        // UPDATE TIMESTAMP LOGIC
-        dispatch({ 
-          type: 'UPDATE_WHITEBOARD', 
-          payload: { 
-              id: activeBoard.id, 
-              snapshot: { document, session },
-              lastUpdated: new Date().toLocaleDateString()
-          } 
+        // <-- DIRECT STORE UPDATE
+        saveItem('whiteboards', { 
+            id: activeBoard.id, 
+            snapshot: { document, session },
+            lastUpdated: new Date().toLocaleDateString()
         });
       }, 1000);
     };
 
-    const cleanupListener = editorInstance.store.listen(handleChange);
+    const cleanupListener = editor.store.listen(handleChange);
 
-    // THE FIX: Force save when the component closes!
     return () => {
       cleanupListener();
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); 
-        
-      // ZOMBIE KILLER: If we just clicked delete, DO NOT auto-save!
-      if (activeBoard && deletingBoardIdRef.current === activeBoard.id) return;
-
-      // 👇 ADDED SAFETY CHECK: Only save if the editor didn't crash
-      if (editorInstance && editorInstance.store && activeBoard) {
-            const { document, session } = getSnapshot(editorInstance.store);
-            dispatch({ 
-              type: 'UPDATE_WHITEBOARD', 
-              payload: { 
-                  id: activeBoard.id, 
-                  snapshot: { document, session },
-                  lastUpdated: new Date().toLocaleDateString()
-              } 
-            });
-        }
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, [activeBoard, dispatch]);
+  }, [editor, activeBoard?.id, saveItem]); // Notice how we depend on the ID and saveItem, preventing infinite loops!
 
   const updateBoardProject = (newProjectId: string) => {
     if (!activeBoard) return;
-    dispatch({ type: 'UPDATE_WHITEBOARD', payload: { id: activeBoard.id, projectId: newProjectId } });
+    saveItem('whiteboards', { id: activeBoard.id, projectId: newProjectId }); // <-- DIRECT STORE UPDATE
     setIsProjectPickerOpen(false);
     setProjectSearch('');
   };
@@ -171,12 +162,12 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
     const newId = crypto.randomUUID();
     const today = new Date().toLocaleDateString();
     
-    dispatch({ type: 'ADD_WHITEBOARD', payload: { 
+    saveItem('whiteboards', { 
         id: newId, 
         name: 'New Board',
         createdAt: today,      
         lastUpdated: today     
-    }});
+    });
     setSelectedBoardId(newId);
     setSearch('');
   };
@@ -207,7 +198,7 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                     className="w-full flex items-center justify-between bg-slate-900 border border-slate-700 text-slate-300 py-2 px-3 rounded-lg hover:bg-slate-800 transition-colors focus:outline-none focus:border-blue-500"
                 >
                     <span className="text-xs truncate mr-2">
-                        {projectFilter === 'All' ? 'All Projects' : data.projects?.find((p:any) => p.id === projectFilter)?.name || 'All Projects'}
+                        {projectFilter === 'All' ? 'All Projects' : projects?.find((p:any) => p.id === projectFilter)?.name || 'All Projects'}
                     </span>
                     <ChevronDown size={14} className="text-slate-500 shrink-0" />
                 </button>
@@ -234,7 +225,7 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                             >
                                 All Projects
                             </button>
-                            {data.projects
+                            {projects
                                 ?.filter((p:any) => p.status !== 'Done')
                                 .filter((p:any) => p.name.toLowerCase().includes(filterSearch.toLowerCase()))
                                 .map((p:any) => (
@@ -293,13 +284,12 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
       {/* Tldraw Canvas */}
       <div className="flex-1 glass-heavy rounded-2xl overflow-hidden relative">
          <div className="absolute inset-0 tldraw-wrapper">
-{activeBoard ? (
+            {activeBoard ? (
                 <Tldraw 
                     key={activeBoard.id}
                     onMount={handleMount}
-                    licenseKey={safeLicenseKey} // <--- ADD THIS LINE BACK IN
+                    licenseKey={safeLicenseKey}
                     inferDarkMode
-                    persistenceKey={`flowstate-board-${activeBoard.id}`}
                 />
             ) : (
                 <div className="flex items-center justify-center h-full text-slate-500">
@@ -314,7 +304,7 @@ export const WhiteboardModule = ({ data, dispatch, focusBoardId, clearFocus }: a
                  <input 
                     className="bg-slate-900/80 backdrop-blur border border-slate-700 rounded-full px-4 py-1 text-center text-sm font-bold text-slate-300 focus:text-white focus:outline-none focus:border-blue-500 transition-colors w-64 shadow-xl" 
                     value={activeBoard.name || ''} 
-                    onChange={e => dispatch({ type: 'UPDATE_WHITEBOARD', payload: { id: activeBoard.id, name: e.target.value } })} 
+                    onChange={e => saveItem('whiteboards', { id: activeBoard.id, name: e.target.value })} 
                     placeholder="Untitled Board"
                  />
 

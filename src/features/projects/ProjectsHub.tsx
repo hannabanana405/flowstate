@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, ChevronRight, Calendar, Archive, RefreshCcw, 
   FileText, PenTool, Trash2, ChevronLeft, CheckSquare, X, Edit2, CalendarPlus 
 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
-
+import { useDataStore } from '../../stores/useDataStore'; // <-- NEW STORE IMPORT!
 
 // --- UTILS (FIXED FOR LOCAL TIMEZONE) ---
 const toLocalISOString = (date: Date) => {
@@ -22,7 +22,10 @@ const addDays = (d: string, n: number) => {
     return toLocalISOString(date);
 };
 
-export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard }: any) => {
+// 👇 NO MORE DATA OR DISPATCH PROPS!
+export const ProjectsHub = ({ onNavigateToDoc, onNavigateToBoard }: any) => {
+  const { projects, tasks, docs, whiteboards, saveItem, deleteItem } = useDataStore(); // <-- DIRECT STORE ACCESS
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isReminderOpen, setIsReminderOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<any>(null);
@@ -33,23 +36,52 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
   
   // --- PAGINATION STATE (Archive Only) ---
   const [archivePage, setArchivePage] = useState(1);
-  const ARCHIVE_ITEMS_PER_PAGE = 9; // 3x3 Grid
+  const ARCHIVE_ITEMS_PER_PAGE = 9; 
   
   // Dependency & Quick Task State
   const [newDep, setNewDep] = useState({ id: '', what: '', who: '', targetDate: '' });
   const [quickTaskTitle, setQuickTaskTitle] = useState('');
-  const activeProjects = data.projects.filter((p:any) => p.status !== 'Done');
-  const archivedProjects = data.projects.filter((p:any) => p.status === 'Done');
-  
-  const filteredActive = activeProjects.filter((p:any) => p.name.toLowerCase().includes(search.toLowerCase()));
-  const filteredArchived = archivedProjects.filter((p:any) => p.name.toLowerCase().includes(search.toLowerCase()));
+
+  // 👇 THE USE-MEMO SUPERCHARGER 👇
+  const { filteredActive, filteredArchived } = useMemo(() => {
+      const active: any[] = [];
+      const archived: any[] = [];
+      const s = search.toLowerCase();
+
+      projects.forEach((p: any) => {
+          if (p.name.toLowerCase().includes(s)) {
+              if (p.status === 'Done') archived.push(p);
+              else active.push(p);
+          }
+      });
+
+      return { filteredActive: active, filteredArchived: archived };
+  }, [projects, search]);
+
+  // 👇 THE PROGRESS BOTTLE-NECK FIX 👇
+  const projectProgressMap = useMemo(() => {
+      const map: Record<string, number> = {};
+      
+      // We group all tasks by project exactly ONE time
+      const grouped = tasks.filter((t:any) => !t.archived && t.project).reduce((acc: any, task: any) => {
+          if (!acc[task.project]) acc[task.project] = { total: 0, done: 0 };
+          acc[task.project].total += 1;
+          if (task.status === 'Done') acc[task.project].done += 1;
+          return acc;
+      }, {});
+
+      // Calculate the percentages
+      for (const pid in grouped) {
+          map[pid] = Math.round((grouped[pid].done / grouped[pid].total) * 100);
+      }
+      return map;
+  }, [tasks]);
 
   // Paginate Archived
   const totalArchivePages = Math.ceil(filteredArchived.length / ARCHIVE_ITEMS_PER_PAGE);
   const archiveStartIndex = (archivePage - 1) * ARCHIVE_ITEMS_PER_PAGE;
   const paginatedArchived = filteredArchived.slice(archiveStartIndex, archiveStartIndex + ARCHIVE_ITEMS_PER_PAGE);
 
-  // Reset pagination on search
   useEffect(() => {
       setArchivePage(1);
   }, [search]);
@@ -59,7 +91,6 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isModalOpen) return;
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        // Only save project if we are NOT in the tasks tab (to prevent conflict with Quick Add)
         if (activeTab !== 'tasks') {
             e.preventDefault();
             saveProject();
@@ -71,7 +102,8 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
   }, [isModalOpen, editingProject, activeTab]);
 
   const openProject = (p: any) => {
-    dispatch({ type: 'TOUCH_PROJECT', payload: p.id });
+    // Replaces dispatch({ type: 'TOUCH_PROJECT' })
+    saveItem('projects', { ...p, lastInteracted: getToday() }); 
     setEditingProject({ ...p });
     setActiveTab('overview');
     setIsModalOpen(true);
@@ -81,12 +113,10 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
   const saveProject = () => {
     if (!editingProject?.name) return;
     
-    // --- HISTORY LOGIC ---
-    const original = data.projects.find((p:any) => p.id === editingProject.id);
+    const original = projects.find((p:any) => p.id === editingProject.id);
     let hasChanged = false;
 
     if (original) {
-        // EXISTING PROJECT: Detect meaningful changes
         const statusChanged = original.status !== editingProject.status;
         const noteChanged = original.statusNote !== editingProject.statusNote;
 
@@ -97,11 +127,9 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                 status: editingProject.status,
                 note: editingProject.statusNote || 'Status updated' 
             };
-            // Add to top of history
             editingProject.history = [newHistoryEntry, ...(editingProject.history || [])];
         }
     } else {
-        // NEW PROJECT: Use the Status Note as the first entry!
         editingProject.history = [{
             date: new Date().toLocaleDateString(),
             status: editingProject.status,
@@ -109,14 +137,11 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
         }];
     }
 
-    // Save Logic
-    editingProject.id 
-      ? dispatch({ type: 'UPDATE_PROJECT', payload: editingProject }) 
-      : dispatch({ type: 'ADD_PROJECT', payload: editingProject });
+    // 👇 UPDATED DISPATCH LOGIC 
+    saveItem('projects', editingProject);
       
     setIsModalOpen(false);
     
-    // --- REMINDER TRIGGER ---
     if (hasChanged && editingProject.status !== 'Done') {
         setReminderData(prev => ({ 
             ...prev, 
@@ -128,7 +153,7 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
 
   const deleteProject = () => {
       if (confirm(`Are you sure you want to PERMANENTLY delete "${editingProject.name}"? This cannot be undone and will remove all associated data.`)) {
-          dispatch({ type: 'DELETE_PROJECT', payload: editingProject.id });
+          deleteItem('projects', editingProject.id);
           setIsModalOpen(false);
       }
   };
@@ -138,41 +163,32 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
      
      let newDeps;
      if (newDep.id) {
-         // EDIT EXISTING
          newDeps = editingProject.dependencies.map((d: any) => d.id === newDep.id ? { ...d, what: newDep.what, who: newDep.who, targetDate: newDep.targetDate } : d);
      } else {
-         // CREATE NEW
          newDeps = [...(editingProject.dependencies || []), { id: crypto.randomUUID(), what: newDep.what, who: newDep.who, targetDate: newDep.targetDate, dateAdded: getToday() }];
      }
      
      const updatedProject = { ...editingProject, dependencies: newDeps };
      setEditingProject(updatedProject);
-     dispatch({ type: 'UPDATE_PROJECT', payload: updatedProject });
-     setNewDep({ id: '', what: '', who: '', targetDate: '' }); // Reset form
+     saveItem('projects', updatedProject);
+     setNewDep({ id: '', what: '', who: '', targetDate: '' }); 
   };
 
-  // --- QUICK ADD TASK LOGIC ---
   const quickAddTask = () => {
       if (!quickTaskTitle.trim()) return;
-
-      const newId = crypto.randomUUID();
       const now = new Date();
       
-      dispatch({ 
-          type: 'ADD_TASK', 
-          payload: { 
-              id: newId, 
-              title: quickTaskTitle, 
-              project: editingProject.id, 
-              status: 'Not Started', 
-              priority: 'Medium', // Default
-              dueDate: getToday(), // Default to Today
-              history: [{
-                  date: now.toLocaleDateString(),
-                  time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  changes: ['Task Created via Project Hub']
-              }]
-          } 
+      saveItem('tasks', {
+          title: quickTaskTitle, 
+          project: editingProject.id, 
+          status: 'Not Started', 
+          priority: 'Medium', 
+          dueDate: getToday(), 
+          history: [{
+              date: now.toLocaleDateString(),
+              time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              changes: ['Task Created via Project Hub']
+          }]
       });
       
       setQuickTaskTitle(''); 
@@ -181,41 +197,33 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
   const createReminder = () => {
     const dueDate = reminderData.customDate ? reminderData.customDate : addDays(getToday(), typeof reminderData.days === 'number' ? reminderData.days : 0);
     
-    dispatch({ type: 'ADD_TASK', payload: { 
+    saveItem('tasks', {
         title: reminderData.note || `Follow up: ${editingProject.name}`, 
         dueDate: dueDate, 
         priority: 'Medium', 
         project: editingProject.id, 
         notes: '' 
-    }});
+    });
 
     setIsReminderOpen(false);
   };
 
-  // --- NEW CREATE HANDLERS ---
   const createLinkedDoc = () => {
       const newId = crypto.randomUUID();
-      dispatch({ type: 'ADD_DOC', payload: { id: newId, title: `Notes: ${editingProject.name}`, projectId: editingProject.id, content: '' } });
+      saveItem('docs', { id: newId, title: `Notes: ${editingProject.name}`, projectId: editingProject.id, content: '' });
       onNavigateToDoc(newId);
       setIsModalOpen(false);
   };
 
   const createLinkedBoard = () => {
       const newId = crypto.randomUUID();
-      const today = new Date().toLocaleDateString();
-      dispatch({ type: 'ADD_WHITEBOARD', payload: { id: newId, name: `Board: ${editingProject.name}`, projectId: editingProject.id, createdAt: today, lastUpdated: today } });
+      saveItem('whiteboards', { id: newId, name: `Board: ${editingProject.name}`, projectId: editingProject.id });
       onNavigateToBoard(newId);
       setIsModalOpen(false);
   };
 
-  const getProgress = (pid: string) => {
-      const tasks = data.tasks.filter((t:any) => t.project === pid && !t.archived);
-      if (tasks.length === 0) return 0;
-      return Math.round(tasks.filter((t:any) => t.status === 'Done').length / tasks.length * 100);
-  };
-
-  const linkedDocs = editingProject ? data.docs.filter((d:any) => d.projectId === editingProject.id) : [];
-  const linkedBoards = editingProject ? data.whiteboards.filter((w:any) => w.projectId === editingProject.id) : [];
+  const linkedDocs = editingProject ? docs.filter((d:any) => d.projectId === editingProject.id) : [];
+  const linkedBoards = editingProject ? whiteboards.filter((w:any) => w.projectId === editingProject.id) : [];
 
   return (
     <div className="space-y-8">
@@ -223,7 +231,6 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-white">Projects</h2>
         <div className="flex gap-4 items-center">
-{/* Search Bar with Clear Button */}
             <div className="relative flex items-center">
                 <Search className="absolute left-3 text-slate-500" size={16} />
                 <input 
@@ -250,7 +257,7 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
 
       {/* Grid (Active Projects) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredActive.length === 0 && activeProjects.length > 0 && <p className="text-slate-500 col-span-3 text-center italic">No projects found matching "{search}".</p>}
+        {filteredActive.length === 0 && projects.some((p: any) => p.status !== 'Done') && <p className="text-slate-500 col-span-3 text-center italic">No projects found matching "{search}".</p>}
         
         {filteredActive.map((p:any) => (
             <div key={p.id} onClick={() => openProject(p)} className="glass p-6 rounded-2xl group border-t border-white/5 hover:border-blue-500/30 cursor-pointer transition-all">
@@ -264,7 +271,8 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                 </div>
                 <div className="mb-4">
                     <div className="w-full bg-slate-800 rounded-full h-1.5">
-                        <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${getProgress(p.id)}%` }}></div>
+                        {/* Instant lookup, no more looping! */}
+                        <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-500" style={{ width: `${projectProgressMap[p.id] || 0}%` }}></div>
                     </div>
                 </div>
                 <p className="text-xs text-slate-400 italic truncate">"{p.statusNote || 'No status note'}"</p>
@@ -273,7 +281,7 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
       </div>
 
       {/* Archive Section */}
-      {archivedProjects.length > 0 && (
+      {filteredArchived.length > 0 && (
           <div className="mt-12 pt-8 border-t border-slate-800/50">
               <button onClick={() => setIsArchiveOpen(!isArchiveOpen)} className="flex items-center gap-3 w-full text-left group">
                   <div className={`p-2 rounded-lg bg-slate-800 group-hover:bg-slate-700 transition-all duration-300 ${isArchiveOpen ? 'rotate-90 text-blue-400' : 'text-slate-400'}`}>
@@ -281,7 +289,7 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                   </div>
                   <div>
                       <h3 className="text-lg font-bold text-slate-300 group-hover:text-white transition-colors">Project Archive</h3>
-                      <p className="text-xs text-slate-500">{archivedProjects.length} projects completed</p>
+                      <p className="text-xs text-slate-500">{filteredArchived.length} projects completed</p>
                   </div>
               </button>
               
@@ -356,11 +364,11 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                         
                         <div className="pt-4 mt-4 border-t border-slate-800/50 flex flex-col gap-3">
                             {editingProject.status !== 'Done' ? (
-                                <button onClick={() => { dispatch({ type: 'UPDATE_PROJECT', payload: { ...editingProject, status: 'Done' } }); setIsModalOpen(false); }} className="text-slate-500 hover:text-blue-400 text-sm font-bold flex items-center justify-center gap-2 w-full py-2 transition-colors">
+                                <button onClick={() => { saveItem('projects', { ...editingProject, status: 'Done' }); setIsModalOpen(false); }} className="text-slate-500 hover:text-blue-400 text-sm font-bold flex items-center justify-center gap-2 w-full py-2 transition-colors">
                                     <Archive size={16} /> Archive Project
                                 </button>
                             ) : (
-                                <button onClick={() => { dispatch({ type: 'UPDATE_PROJECT', payload: { ...editingProject, status: 'On Track' } }); setIsModalOpen(false); }} className="text-slate-500 hover:text-blue-400 text-sm font-bold flex items-center justify-center gap-2 w-full py-2 transition-colors">
+                                <button onClick={() => { saveItem('projects', { ...editingProject, status: 'On Track' }); setIsModalOpen(false); }} className="text-slate-500 hover:text-blue-400 text-sm font-bold flex items-center justify-center gap-2 w-full py-2 transition-colors">
                                     <RefreshCcw size={16} /> Restore Project
                                 </button>
                             )}
@@ -402,7 +410,6 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                                             </div>
                                         </div>
                                         
-                                        {/* Actions (Hover) */}
                                         <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button onClick={() => setNewDep(d)} className="text-slate-500 hover:text-blue-400 transition-colors p-1" title="Edit Dependency">
                                                 <Edit2 size={14} />
@@ -410,20 +417,19 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                                             <button onClick={() => {
                                                 const newDeps = editingProject.dependencies.filter((x:any) => x.id !== d.id);
                                                 setEditingProject({ ...editingProject, dependencies: newDeps });
-                                                dispatch({ type: 'UPDATE_PROJECT', payload: { ...editingProject, dependencies: newDeps } });
+                                                saveItem('projects', { ...editingProject, dependencies: newDeps });
                                             }} className="text-slate-500 hover:text-red-400 transition-colors p-1" title="Delete">
                                                 <Trash2 size={14} />
                                             </button>
                                         </div>
                                     </div>
                                     
-                                    {/* Follow Up Task Trigger */}
                                     {d.targetDate && (
                                         <button 
                                             onClick={() => {
                                                 setReminderData({ days: 0, note: `Follow up on blocker: ${d.what} (${d.who})`, customDate: d.targetDate });
                                                 setIsReminderOpen(true);
-                                                setIsModalOpen(false); // Close project modal to focus on reminder
+                                                setIsModalOpen(false); 
                                             }} 
                                             className="mt-2 flex items-center gap-2 text-xs font-bold text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg w-fit transition-colors"
                                         >
@@ -501,7 +507,7 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                         </div>
 
                         <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                            {data.tasks.filter((t:any) => t.project === editingProject.id).length ? data.tasks.filter((t:any) => t.project === editingProject.id).map((t:any) => (
+                            {tasks.filter((t:any) => t.project === editingProject.id).length ? tasks.filter((t:any) => t.project === editingProject.id).map((t:any) => (
                                 <div key={t.id} className="p-3 bg-slate-800/50 rounded-lg flex justify-between items-center border border-slate-800 hover:border-slate-700">
                                     <span className="text-sm font-medium text-slate-300">{t.title}</span>
                                     <span className={`text-xs px-2 py-1 rounded ${t.status === 'Done' ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-400 bg-slate-800'}`}>{t.status}</span>
@@ -528,7 +534,6 @@ export const ProjectsHub = ({ data, dispatch, onNavigateToDoc, onNavigateToBoard
                 ))}
             </div>
             <div className="relative">
-                {/* Updated White Background Input */}
                 <input 
                     type="date" 
                     className={`w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:border-blue-500 transition-colors ${reminderData.customDate ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-300'}`} 

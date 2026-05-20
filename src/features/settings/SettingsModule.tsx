@@ -1,17 +1,22 @@
 import { useRef, useState } from 'react';
 import { Download, Upload, ShieldCheck, AlertTriangle, FileJson } from 'lucide-react';
+import { useDataStore } from '../../stores/useDataStore'; // <-- NEW STORE IMPORT!
 
-export const SettingsModule = ({ data, dispatch }: any) => {
+// 👇 NO MORE DATA OR DISPATCH PROPS!
+export const SettingsModule = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  
+  // Directly access all data arrays and the save function
+  const { tasks, projects, docs, whiteboards, saveItem } = useDataStore();
 
   // 1. BACKUP: Download State as JSON
   const handleBackup = () => {
     const backupData = {
-        tasks: data.tasks,
-        projects: data.projects,
-        docs: data.docs,
-        whiteboards: data.whiteboards,
+        tasks,
+        projects,
+        docs,
+        whiteboards,
         timestamp: new Date().toISOString(),
         version: "1.0"
     };
@@ -27,13 +32,13 @@ export const SettingsModule = ({ data, dispatch }: any) => {
     URL.revokeObjectURL(url);
   };
 
-  // 2. RESTORE: Read JSON and Dispatch Import
+  // 2. RESTORE: Read JSON and Save to Database
   const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!confirm("⚠️ CAUTION: This will overwrite items with matching IDs and add missing ones. \n\nAre you sure you want to merge this backup?")) {
-        e.target.value = ''; // Reset input
+        e.target.value = ''; 
         return;
     }
 
@@ -47,8 +52,13 @@ export const SettingsModule = ({ data, dispatch }: any) => {
         // Basic Validation
         if (!json.tasks || !json.projects) throw new Error("Invalid Backup File");
 
-        dispatch({ type: 'IMPORT_DATA', payload: json });
-        alert(`✅ Restore Complete!\n\nImported:\n- ${json.tasks.length} Tasks\n- ${json.projects.length} Projects\n- ${json.docs.length} Docs\n- ${json.whiteboards.length} Boards`);
+        // Loop through the imported arrays and push them to the global store!
+        if (json.tasks) json.tasks.forEach((t: any) => saveItem('tasks', t));
+        if (json.projects) json.projects.forEach((p: any) => saveItem('projects', p));
+        if (json.docs) json.docs.forEach((d: any) => saveItem('docs', d));
+        if (json.whiteboards) json.whiteboards.forEach((w: any) => saveItem('whiteboards', w));
+
+        alert(`✅ Restore Complete!\n\nImported:\n- ${json.tasks?.length || 0} Tasks\n- ${json.projects?.length || 0} Projects\n- ${json.docs?.length || 0} Docs\n- ${json.whiteboards?.length || 0} Boards`);
       } catch (err) {
         alert("❌ Failed to restore: Invalid file format.");
         console.error(err);
