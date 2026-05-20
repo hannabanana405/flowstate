@@ -18,7 +18,7 @@ interface DataState {
   error: string | null; 
   lastSynced: string | null;
   
-  // Actions (Replacing your old dispatch)
+  // Actions
   setUser: (user: any) => void;
   subscribeToData: (uid: string) => () => void;
   saveItem: (collectionName: 'tasks' | 'projects' | 'docs' | 'whiteboards', item: any) => Promise<void>;
@@ -42,12 +42,11 @@ export const useDataStore = create<DataState>((set, get) => ({
 
   setUser: (user) => set({ user }),
 
-  // 2. The Universal Save Function (Replaces your 'ADD_' and 'UPDATE_' dispatches)
+  // 2. The Universal Save Function
   saveItem: async (collectionName, item) => {
       const uid = get().user?.uid;
       if (!uid) return;
       
-      const isNew = !item.id;
       const finalItem = {
           ...item,
           id: item.id || crypto.randomUUID(),
