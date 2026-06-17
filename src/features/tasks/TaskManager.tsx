@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
 import confetti from 'canvas-confetti';
-import { useDataStore } from '../../stores/useDataStore'; // <-- NEW STORE IMPORT!
+import { useDataStore } from '../../stores/useDataStore'; 
 
 // --- UTILS (FIXED FOR LOCAL TIMEZONE) ---
 const toLocalISOString = (date: Date) => {
@@ -44,9 +44,8 @@ const calculateNextDate = (currentDate: string, recurrence: string) => {
     return toLocalISOString(date);
 };
 
-// 👇 NO MORE DATA OR DISPATCH PROPS!
 export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
-  const { tasks, projects, saveItem, deleteItem } = useDataStore(); // <-- DIRECT STORE ACCESS
+  const { tasks, projects, saveItem, deleteItem } = useDataStore(); 
 
   const [filter, setFilter] = useState('All');
   const [projectFilter, setProjectFilter] = useState('All');
@@ -99,7 +98,7 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
       const name = prompt("New Project Name:");
       if (name) {
         const newId = crypto.randomUUID();
-        saveItem('projects', { id: newId, name, status: 'On Track' }); // <-- UPDATED DISPATCH
+        saveItem('projects', { id: newId, name, status: 'On Track' }); 
         setEditingTask({ ...editingTask, project: newId });
         setIsProjectPickerOpen(false);
         setProjectPickerSearch('');
@@ -151,9 +150,7 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
         editingTask.statusNote = `Recycled! Next due: ${nextDate}`;
     }
 
-    // 👇 UPDATED DISPATCH LOGIC (Handles both create and update automatically!)
     saveItem('tasks', editingTask);
-      
     setIsModalOpen(false);
   };
 
@@ -170,9 +167,11 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen, editingTask]); 
 
-  // 👇 THE USE-MEMO SUPERCHARGER 👇
+  // --- THE USE-MEMO SUPERCHARGER ---
   const sortedAndFiltered = useMemo(() => {
       const filtered = tasks.filter((t: any) => {
+        if (!t.title) return false; // Guard rail for fragmented data
+        
         if (filter === 'Archived') return t.archived;
         if (t.archived) return false;
         
@@ -202,9 +201,9 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
           const scoreB = (b.ice?.impact || 1) * (b.ice?.confidence || 1) * (b.ice?.ease || 1);
           return scoreB - scoreA;
       });
-  }, [tasks, filter, projectFilter, search, dateFilter]); // Only recalculate when these change!
+  }, [tasks, filter, projectFilter, search, dateFilter]);
 
-  // --- PAGINATION CALCULATION (Lightning Fast Now) ---
+  // --- PAGINATION CALCULATION ---
   const totalPages = Math.ceil(sortedAndFiltered.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedTasks = sortedAndFiltered.slice(startIndex, startIndex + ITEMS_PER_PAGE);
@@ -213,13 +212,12 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
       setEditingTask({ 
           title: '', status: 'Not Started', priority: 'Medium', 
           dueDate: getToday(), project: '', tags: [], notes: '', statusNote: '', history: [],
-          ice: { impact: 1, confidence: 1, ease: 1 }
+          ice: { impact: 1, confidence: 1, ease: 1 }, archived: false
       });
       setModalTab('details');
       setIsModalOpen(true);
   };
 
-  // Filter projects for the picker modal
   const pickerFilteredProjects = projects.filter((p:any) => 
     p.name.toLowerCase().includes(projectPickerSearch.toLowerCase()) && p.status !== 'Done'
   );
@@ -230,7 +228,6 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
     <div className="h-full flex flex-col space-y-6">
       {/* Controls Header */}
       <div className="flex justify-between items-center gap-4">
-        {/* Search Bar with Clear Button */}
             <div className="relative flex items-center">
                 <Search className="absolute left-3 text-slate-500" size={16} />
                 <input 
@@ -336,9 +333,9 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
                                     {t.status}
                                 </span>
                             </td>
-                            <td className={`p-5 text-sm ${t.dueDate < getToday() && t.status !== 'Done' ? 'text-red-400 font-bold' : 'text-slate-400'}`}>
-                                {t.dueDate}
-                                {t.dueDate < getToday() && t.status !== 'Done' && <span className="text-xs ml-1">(Late)</span>}
+                            <td className={`p-5 text-sm ${t.dueDate && t.dueDate < getToday() && t.status !== 'Done' ? 'text-red-400 font-bold' : 'text-slate-400'}`}>
+                                {t.dueDate || 'No Date'}
+                                {t.dueDate && t.dueDate < getToday() && t.status !== 'Done' && <span className="text-xs ml-1">(Late)</span>}
                             </td>
                             <td className="p-5">
                                 <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black text-xs shadow-[0_0_10px_rgba(59,130,246,0.2)]">
@@ -347,7 +344,6 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
                             </td>
                             <td className="p-5 text-right">
                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {/* 👇 UPDATED INLINE ACTIONS 👇 */}
                                     <button 
                                         onClick={(e) => { 
                                             e.stopPropagation(); 
@@ -362,7 +358,8 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
                                     <button onClick={(e) => { 
                                         e.stopPropagation();
                                         if(!t.archived) triggerConfetti();
-                                        saveItem('tasks', { id: t.id, archived: !t.archived }); 
+                                        // 👑 FIX: Spread the entire object 't' instead of just passing the id!
+                                        saveItem('tasks', { ...t, archived: !t.archived }); 
                                     }} className="p-2 text-slate-500 hover:text-blue-400">
                                         {t.archived ? <RefreshCcw size={16} /> : <Archive size={16} />}
                                     </button>
@@ -381,7 +378,7 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
                     {paginatedTasks.length === 0 && (
                         <tr>
                             <td colSpan={6} className="p-8 text-center text-slate-500 italic">
-                                All caught up for today! 🎉 (Or adjust your filters)
+                                All caught up! 🎉 (Or adjust your filters)
                             </td>
                         </tr>
                     )}
@@ -454,7 +451,6 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
-                            {/* --- SEARCHABLE PROJECT PICKER --- */}
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Project</label>
                                 <div className="relative" ref={projectPickerRef}>
@@ -518,7 +514,7 @@ export const TaskManager = ({ focusTaskId, clearFocus }: any) => {
                                 />
                             </div>
                         </div> 
-                        {/* --- ICE SCORING --- */}
+
                         <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 space-y-4">
                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">I.C.E. Score</h4>
                             
